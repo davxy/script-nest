@@ -7,6 +7,7 @@
 #
 # Depedencies:
 # - `zellij`
+# - `ff`: https://github.com/davxy/script-nest/blob/main/bin/ff
 # - `fzf` for the `search` subcommand
 # - `bat` for the `search --buffer` option
 # - `git` for the `git` subcommand
@@ -72,12 +73,12 @@ function current_file_and_line() {
 
 # Search in current working directory
 # 
-# First argument should be any extra option to pass to `rf` tool (like "f")
+# First argument should be any extra option to pass to `ff` script (like "f")
 function search_cwd() {
     opts="x"$1
 
     zellij action toggle-fullscreen
-    file_paths=$(rf -$opts | tr '\n' ' ')
+    file_paths=$(ff -$opts | tr '\n' ' ')
     # if [[ $2 == 1 ]]; then
     new_paths=""
     for file in $file_paths; do
