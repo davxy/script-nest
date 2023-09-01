@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.1.0
+# Version: 0.1.1
 #
 # Extensions used by Helix editor
 #
@@ -58,7 +58,7 @@ function current_file_and_line() {
     zellij action focus-next-pane
 
     # Extract status line
-    status_line=$(cat $DUMP_FILE | grep -e "(NOR|INS|SEL)")
+    status_line=$(cat $DUMP_FILE | grep -E "(NOR|INS|SEL)")
     # Fetch file name (expand eventual "~")
     filename=$(echo $status_line | cut -d' ' -f2)
     # Try to detect if 'spinner' is present on the line
