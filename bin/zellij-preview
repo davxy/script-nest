@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+#
+# Preview zellij sessions
+
+preview_func() {
+	tmpfile="/tmp/zellij-preview-dump"
+	session=$1
+	is_curr=$(echo $session | grep "current")
+	if [[ $is_curr != "" ]]; then
+		echo "--current--"
+		return
+	fi
+	zellij -s "$session" action dump-screen $tmpfile
+	bat --color always --language bash $tmpfile
+	rm $tmpfile
+}
+
+export -f preview_func
+# s=$(zellij list-sessions | fzf --preview 'zellij -s {} action dump-screen /tmp/zellij-screen; bat --color always /tmp/zellij-screen')
+s=$(zellij list-sessions | fzf --preview 'preview_func {}')
+
+if [[ $s != "" ]]; then
+	zellij attach $s
+fi

@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+#
+# Author: Davide Galassi <davxy@datawok.net>
+# Version: 0.1.0
+#
+# Simple wrapper for `gammastep`
+
+gamma_default=6500
+gamma_file=/tmp/gamma_value
+
+gamma_min=3000
+gamma_max=8000
+gamma_inc=200
+
+if [[ -f $gamma_file ]]; then
+    gamma_curr=$(cat $gamma_file)
+else
+    gamma_curr=$gamma_default
+fi
+
+op=${1:0:1}
+val=${1:1:10}
+
+if [[ $op == "+" ]]; then
+    if [[ $val == "" ]]; then
+        val=$gamma_inc
+    fi
+    gamma_curr=$(($gamma_curr + $val))
+elif [[ $op == "-" ]]; then
+    if [[ $val == "" ]]; then
+        val=$gamma_inc
+    fi
+    gamma_curr=$(($gamma_curr - $val))
+elif [[ $op == "=" ]]; then
+    if [[ $val == "" ]]; then
+        gamma_curr=$gamma_default
+    else
+        gamma_curr=$val
+    fi
+elif [[ $op == "?" ]]; then
+    echo "Current value: $gamma_curr"
+    echo "Min value: $gamma_min"
+    echo "Max value: $gamma_max"
+    exit
+elif [[ $op == "?" ]]; then
+    echo "Current value: $gamma_curr"
+    exit
+else
+    echo "Usage: gammactl [+|-|=][value] | ?"
+    echo "   ?         print current value"
+    echo "   +[value]  increment current value by. If value is empty default is used (${gamma_inc}K)"
+    echo "   -[value]  decrement current value by. If value is empty default is used (${gamma_inc}K)"
+    echo "   =[value]  set value to. If value is empty default is used (${gamma_default}K)"
+    exit
+fi
+
+if [[ $gamma_curr -gt $gamma_max ]]; then
+    gamma_curr=$gamma_max
+fi
+if [[ $gamma_curr -lt $gamma_min ]]; then
+    gamma_curr=$gamma_min
+fi
+
+
+echo $gamma_curr > $gamma_file
+
+prev_pid=$(pidof gammastep)
+
+gammastep -P -O $gamma_curr &>/dev/null &
+
+if [[ $prev_pid != "" ]]; then
+    kill -s kill ${prev_pid}
+fi
+
+perc=$(awk -v a=$gamma_curr -v b=$gamma_max -v c=$gamma_min 'BEGIN { printf("%.0f", 100*(a-c)/(b-c)); }')
+
+echo "Setting gamma to: ${gamma_curr}K (${perc}%)"

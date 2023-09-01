@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+#
+# Author: Davide Galassi <davxy@datawok.net>
+# Version: 0.1.0
+#
+# Wrapper tool to manage wireguard connections
+
+curr_wg=$(sudo wg show | grep interface | awk '{ print $2 }')
+
+function connect() {
+    if [[ $curr_wg != "" ]]; then
+        echo "A wireguard connection already exists."
+        disconnect
+    fi
+    curr_wg=$2
+    if [[ $curr_wg == "" ]]; then
+        echo "You need to specify a profile."
+        echo "Use 'list' to see the available profiles."
+        exit
+    fi
+    echo "Connecting to: '$curr_wg'"
+    sudo wg-quick up $curr_wg
+    status
+}
+
+function disconnect() {
+    if [[ $curr_wg == "" ]]; then
+        echo "No wireguard connections are present."
+        exit
+    fi
+    echo "Disconnecting from: $curr_wg"
+    sudo wg-quick down $curr_wg
+}
+
+function status() {
+    if [[ $curr_wg == "" ]]; then
+        echo "No wireguard connections are present."
+    else
+        sudo wg show
+    fi
+}
+
+function list() {
+    profiles=$(sudo ls /etc/wireguard)
+    if [[ $profiles == "" ]]; then
+        echo "No available profiles"
+        exit
+    fi
+    echo "Available profiles: "
+    for profile in $profiles; do
+        profile=$(echo $profile | sed 's/\.conf//g')
+        prefix="-"
+        if [[ ${curr_wg} == ${profile} ]]; then
+            prefix="*"
+        fi
+        echo "${prefix} ${profile}"
+    done
+}
+
+function help() {
+    echo "Usage: vpn <command> <options>"
+    echo ""
+    echo "Commands:"
+    echo ""
+    echo "  connect: connects to a wireguard profile which configuration name is given"
+    echo "           after the action. The configuration name should be passed without"
+    echo "           extension and be already installed in the '/etc/wireguard' folder."
+    echo ""
+    echo "  disconnect: disconnect from wireguard."
+    echo ""
+    echo "  status: get current connection status."
+    echo ""
+    echo "  list: list available profiles (* currently connected profile)."
+    exit
+}
+
+case $1 in
+    connect)
+        connect $@
+        ;;
+    disconnect)
+        disconnect $@
+        ;;
+    status)
+        status $@
+        ;;
+    list)
+        list $@
+        ;;
+    *)
+        help
+        ;;
+esac

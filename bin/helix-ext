@@ -1,6 +1,7 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Author: Davide Galassi <davxy@datawok.net>
+# Version: 0.1.0
 #
 # Extensions used by Helix editor
 #

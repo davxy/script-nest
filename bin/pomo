@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+#
+# Author: Davide Galassi <davxy@datawok.net>
+# Version: 0.1.2
+#
+# Simplest pomodoro timer CLI
+
+aduration=30
+pduration=5
+
+while getopts "a:p:s:h" opt; do
+    case $opt in
+        a) aduration=$OPTARG ;;
+        p) pduration=$OPTARG ;;
+        s) soundfile=$OPTARG ;;
+        h|*) 
+            echo "Usage: pomo [-a <duration>] [-p <duration>] [-s <path>]"
+            echo "  -a: activity duration is minutes (default ${aduration})"
+            echo "  -p: pause duration is minutes (default ${pduration}). Set to 0 for one shot activity"
+            echo "  -s: path to a wav file to play between activities (reproduced via 'aplay')"
+            exit 0
+            ;;
+    esac
+done
+
+echo "Start time:        $(date '+%H:%M')"
+echo "Activity duration: ${aduration}m"
+echo "Pause duration:    ${pduration}m"
+echo "Sound file:        ${soundfile}"
+
+# last notification id
+notification_id="NAN"
+                                           
+# Args: duration, msg, soundfile
+function notify() {
+    duration=$1
+    msg=$2
+    sound=$3
+
+    now=$(date)
+    start=$(date -d "$now" "+%H:%M")
+    end=$(date -d "$now +$duration min" "+%H:%M")
+
+    notification_head="$msg"
+    notification_body="$start - $end"
+    printf "%-23s: %s\n" "$notification_head" "$notification_body"
+
+    if [[ $notification_id == "NAN" ]]; then
+        notification_id=0
+        return
+    fi
+
+    notification_id=$(notify-send \
+        -u critical -t 0 -p -r $notification_id \
+        -a "POMO" "$notification_head" "$notification_body")
+
+    if [[ $sound != "" ]]; then
+        aplay -q "$3"
+    fi
+}
+
+if [[ $pduration == 0 ]]; then
+    breakmsg="TIME OVER"
+else
+    breakmsg="TIME FOR A BREAK (${pduration}m)"
+fi
+
+aduration_sec=$((aduration * 60))
+pduration_sec=$((pduration * 60))
+
+while true; do
+    notify $aduration "TIME FOR WORK (${aduration}m)" $soundfile
+    sleep $aduration_sec
+    notify $pduration "$breakmsg" $soundfile
+    if [[ $pduration == 0 ]]; then
+        break
+    fi
+    sleep $pduration_sec
+done

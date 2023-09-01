@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+#
+# Author: Davide Galassi <davxy@datawok.net>
+# Version: 0.1.0
+#
+# Mount a remote  folder via sshfs.
+# 
+# Depends on `sshfs`.
+#
+# Increase speed with weaker (but good enough) encrypted Ciphers:
+# aes128-ctr, aes192-ctr, aes256-ctr
+#
+# cache_timeout and ServerAliveInterval are set in seconds
+# For the cache timeout you might want to set the time, the remote server needs
+# to update its files, plus 1/6 to make sure you only get fresh files.
+#
+# ServerAliveInterval=N option asks sshfs to check if the server is alive
+# every N seconds.
+# The default is ServerAliveInterval=0 (no alive check)
+# ServerAliveCountMax=M allows the server to not respond for up to M alive
+# checks. The result is that if the server is unavailable for N*M seconds,
+# sshfs will reconnect to the server.
+
+mount()
+{
+    REM=$1
+    DIR=$2
+    echo "Mounting" $REM "to" $DIR
+    mkdir -p $DIR
+    set -x
+    sshfs $REM $DIR \
+        -o ServerAliveInterval=15 \
+        -o ServerAliveCountMax=3 \
+        -o reconnect \
+        -o auto_cache \
+        -o cache_timeout=300 \
+        -o cache=yes \
+        -o idmap=user \
+        -o follow_symlinks \
+        -o transform_symlinks \
+        -o PreferredAuthentications=publickey \
+        -o Ciphers=aes128-ctr
+    if [ $? != 0 ]; then
+        echo "Mount error"
+        mountpoint $DIR
+        if [ $? != 0 ]; then
+            rm -rf $DIR
+        fi
+    fi
+    set +x
+}
+
+umount()
+{
+    DIR=$1
+    echo "Umounting" $DIR
+    fusermount -u $DIR
+    rm -rf $DIR
+}
+
+case "$1" in
+    mount)
+        mount $2 $3
+        ;;
+    umount)
+        umount $2
+        ;;
+    remount)
+        umount $3
+        mount $2 $3
+        ;;
+    *)
+        echo "Usage: $0 <mount|umount|remount> <remote> <local>"
+        ;;
+esac

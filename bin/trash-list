@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+#
+# Author: Davide Galassi <davxy@datawok.net>
+# Version: 0.1.0
+#
+# Wrapper for `trash-list` command (part of `trash` package) to:
+# - create fallbacks for missing `*.trashinfo` files
+# - remove orphaned `*.trashinfo` files
+
+TRASH_DIR="$HOME/.local/share/Trash"
+
+for file in "${TRASH_DIR}"/files/*; do
+  filename=$(basename "$file")
+  info="${TRASH_DIR}/info/${filename}.trashinfo"
+  if [ ! -e "$info" ]; then
+    echo "Missing \"$filename\" metadata, falback to default"
+    modification_date=$(stat -c "%y" "$file")
+    modification_date=$(date -d "$modification_date" "+%Y-%m-%dT%H:%M:%S")
+    cat > "$info"  <<EOF
+[Trash Info]
+Path=${HOME}/tmp/trash-orphans/${filename}
+DeletionDate=${modification_date}
+EOF
+  fi
+done
+
+for info in "${TRASH_DIR}"/info/*; do
+  filename=$(basename "$info")
+  file="${TRASH_DIR}/files/${filename%.*}"
+  if [ ! -e "$file" ]; then
+    echo "Cleaning orphan metadata for \"${filename%.*}\""
+    rm $info
+  fi
+done
+
+exec /usr/bin/trash-list $@

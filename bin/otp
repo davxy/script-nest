@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+#
+# Author: Davide Galassi <davxy@datawok.net>
+# Version: 0.1.0
+#
+# Generate otp secrets using `oathtool`
+# 
+# Dependencies:
+# - oathtool: to generate one time passwords
+# - gnupg: to encrypt secrets "database"
+# - libsecret: to cache password to open the secret tokens vault
+#
+# Database is encrypted and stored in '$HOME/.config/otptool/data.gpg'
+
+config_dir="${HOME}/.config/otp"
+data="${config_dir}/data.gpg"
+tmp=$(mktemp)
+
+mkdir -p "${config_dir}"
+
+# Parse options
+command=$1
+commands="list show insert delete rename totp"
+command=$(echo $commands | tr ' ' '\n' | grep -w $1)
+account=$2
+
+if [[ $command == "" ]]; then
+    echo "Usage otptool [command] <account>"
+    echo ""
+    echo "Commands:"
+    echo "* 'list':   list all entries"
+    echo "* 'show':   show entry token"
+    echo "* 'insert': insert an entry"
+    echo "* 'delete': delete an entry"
+    echo "* 'rename': rename an entry"
+    echo "* 'totp':   generate timed one time password"
+    exit
+fi
+
+if [[ ! -f ${data} ]]; then
+    echo "Empty database"
+    exit
+fi
+
+password=$(secret-tool lookup service otp-tool type password)
+if [[ $password == "" ]]; then
+    echo "Password not found in libsecret keyring"
+    # Read data passphrase
+    read -s -p "Enter password: " password
+    echo ""
+fi
+
+gpg --quiet --decrypt --batch --passphrase ${password} ${data} > "$tmp"
+if [[ $? != 0 ]]; then
+    exit
+fi
+
+if [[ $command == "list" ]]; then
+    cat ${tmp} | awk '{ print $1 }'
+    rm ${tmp}
+    exit
+fi
+
+if [[ $account == "" ]]; then
+    echo "Please specify an account"
+    exit
+fi
+
+function show() {
+    entry=$(cat $tmp | grep -e "^${account}\s" | awk '{ print $2 }')
+    if [[ $entry == "" ]]; then
+        echo "No entry for: '${account}'"
+        return 1
+    else
+        echo $entry
+    fi
+}
+
+function insert() {
+    entry=$(cat $tmp | grep -e "^${account}\s")
+    if [[ $entry != "" ]]; then
+        echo "Entry for ${account} exists, delete it first"
+        return 1
+    fi
+    secret=$1
+    if [[ $secret == "" ]]; then
+        echo "Empty secret, please specify one"
+        return 1
+    fi
+    oathtool -b $secret > /dev/null
+    if [[ $? != 0 ]]; then
+        echo "Bad base32 token"
+        return 1
+    fi
+
+    echo "${account} ${secret}" >> ${tmp}
+}
+
+function delete() {
+    sed -i "/${account}\s/d" ${tmp}
+}
+
+function rename() {
+    newname="$1"
+    sed -i "s/${account} /${newname} /" ${tmp}
+}
+
+function totp() {
+    token=$(show)
+    if [[ $? != 0 ]]; then
+        echo "Token not found for '$account'"
+        return 1
+    fi
+    code=$(oathtool -b --totp "$token")
+    echo "$code"
+}
+
+modified=0
+
+case ${command} in
+  "show") show ;;
+  "insert") insert $3; modified=1 ;;
+  "delete") delete; modified=1 ;;
+  "rename") rename $3; modified=1 ;;
+  "totp") totp ;;
+  *) ;;
+esac
+
+if [[ $modified == 1 ]]; then
+    echo "Updating DB..."
+    gpg -o "${data}" --yes --symmetric --batch  --passphrase ${passphrase} ${tmp}
+fi
+
+rm -f $tmp

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+#
+# Converts a list of base 10 digits to base 16
+
+for n in $@; do
+    a=$(echo $n | sed 's/[^0-9]//g')
+    if [ ! -z $a ]; then
+        printf "%02x " $a
+    fi
+done
+printf "\n"

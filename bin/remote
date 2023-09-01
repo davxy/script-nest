@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+#
+# Author: Davide Galassi <davxy@datawok.net>
+# Version: 0.1.1
+#
+# Utility shortcuts to be used to control common "remote" actions
+
+REMOTE_NAME="behemoth"
+MACADDR="d8:5e:d3:02:ed:00"
+SMB_USER="davxy"
+MOUNT_POINT="/home/${SMB_USER}/${REMOTE_NAME}"
+
+if [[ ${HOSTNAME} == ${REMOTE_NAME} ]]; then
+    echo "Currently logged in ${REMOTE_NAME}"
+    exit
+fi
+
+function remote_start() {
+    wol ${MACADDR}
+}
+
+function remote_stop() {
+    ssh remote shutdown -h now
+}
+
+function remote_mount() {
+    dir=$1
+    if [[ $dir == "" ]]; then
+        dir="data"
+    fi
+    mkdir -p ${MOUNT_POINT}/${dir}
+    target=${MOUNT_POINT}/${dir}
+    echo "Mounting ${target}"
+    sudo mount -t cifs -ouser=${SMB_USER} //${REMOTE_NAME}/${dir} ${target}
+}
+
+function remote_umount() {
+    dir=$1
+    if [[ $dir == "" ]]; then
+        dir="data"
+    fi
+    target=${MOUNT_POINT}/${dir}
+    echo "Umounting ${target}"
+    sudo umount ${target}
+}
+
+function remote_sway() {
+    waypipe ssh ${REMOTE_NAME} sway
+}
+
+if [[ $1 == "start" ]]; then
+    remote_start
+elif [[ $1 == "stop" ]]; then
+    remote_stop
+elif [[ $1 == "mount" ]]; then
+    remote_mount $2
+elif [[ $1 == "umount" ]]; then
+    remote_umount $2
+elif [[ $1 == "wake" ]]; then
+    remote_wake
+elif [[ $1 == "sway" ]]; then
+    remote_sway
+else
+    echo "Usage: remote <command>"
+    echo ""
+    echo "Available commands:"
+    echo " start           Wakeup (using 'wakeonlan')"
+    echo " stop            Shutdown"
+    echo " mount [dir]     Mount remote share in 'behemoth/dir'"
+    echo " umount [dir]    Umount remote share in 'behemoth/dir'"
+    echo " sway            Start and connect to a remote sway session (using 'waypipe')"
+fi

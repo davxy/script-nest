@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 #
-# Author: Davide Galassi <davxy@datawok.net>
-#
 # Tool to synchronize versioned and user scripts in the ~/bin folder.
 #
 # Depends on:

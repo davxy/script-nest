@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+#
+# Show system colors - v0.1.0
+
+# Function to print text in a specific color
+print_color() {
+    echo -e "\033[${1}m${2}\033[0m"
+}
+
+for i in {0..255}; do
+    # Print the color code an a sample text
+    print_color "38;5;${i}" "$i: Sample Text"
+done
