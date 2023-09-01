@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+#
+# Author: Davide Galassi <davxy@datawok.net>
+#
+# Tool to synchronize versioned and user scripts in the ~/bin folder.
+#
+# Depends on:
+# - rsync
+
+USER_BIN="$HOME/bin/"
+NEST_BIN="$PWD/bin/"
+
+SYNC="rsync -av --progress --delete"
+
+mkdir -p $USER_BIN
+
+if [[ $1 == "out" ]]; then
+    echo "Syncing OUT"
+    out=1
+elif [[ $1 == "in" ]]; then
+    echo "Syncing IN"
+    out=0
+else
+    echo "Usage: sync <in|out>"
+    echo "  in : copy scripts from \"$USER_BIN\""
+    echo "  out: copy scripts to \"$USER_BIN\""
+    exit
+fi
+
+if [[ $out == 1 ]]; then
+    src=$NEST_BIN
+    dst=$USER_BIN
+else
+    dst=$NEST_BIN
+    src=$USER_BIN
+fi
+
+$SYNC $src $dst
