@@ -5,12 +5,12 @@
 # Depends on:
 # - rsync
 
-USER_BIN="$HOME/bin/"
-NEST_BIN="$PWD/bin/"
-
-SYNC="rsync -av --progress --delete"
+USER_BIN="$HOME/bin"
+NEST_BIN="$PWD/bin"
 
 mkdir -p $USER_BIN
+
+files=$(git ls-files --cached $NEST_BIN | sed 's/bin\///g')
 
 if [[ $1 == "out" ]]; then
     echo "Syncing OUT"
@@ -26,11 +26,16 @@ else
 fi
 
 if [[ $out == 1 ]]; then
-    src=$NEST_BIN
-    dst=$USER_BIN
+    src_dir=$NEST_BIN
+    dst_dir=$USER_BIN
 else
-    dst=$NEST_BIN
-    src=$USER_BIN
+    dst_dir=$NEST_BIN
+    src_dir=$USER_BIN
 fi
 
-$SYNC $src $dst
+for file in $files; do
+    src="$src_dir/$file"
+    dst="$dst_dir/$file"
+    echo "* '$src' -> '$dst'"
+    cp $src $dst
+done
