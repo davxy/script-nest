@@ -129,7 +129,7 @@ function git_status() {
     zellij action toggle-fullscreen
     file=$(git status --short | \
          awk '{ printf("[%s] %s\n", $1, $2) }' | \
-         fzf --preview 'git --no-pager diff {2}' --preview-window 'up,~4,+{2}+4/2' | \
+         fzf --preview 'git diff --color {2}' --preview-window 'up,~4,+{2}+4/2' | \
          awk '{ print $2 }')
     zellij action toggle-fullscreen
     if [[ $file == "" ]]; then
@@ -153,8 +153,8 @@ function git_blame() {
 
 function git_browse() {
     fl=$(current_file_and_line)
-
     file=$(echo $fl | cut -d':' -f1)
+
     git ls-files --error-unmatch "$file" 2> /dev/null
     if [ $? -ne 0 ]; then
         # Not in a git working directory. Open the repo root
@@ -188,6 +188,41 @@ function git_browse() {
     sleep 1
 }
 
+function diff_with_saved() {
+    fl=$(current_file_and_line)
+    file=$(echo $fl | cut -d':' -f1)
+    line=$(echo $fl | cut -d':' -f2)
+
+    # Select original pane
+    zellij action focus-previous-pane
+
+    # Save buffer to a temporary file by copying buffer content to a scratch
+    # buffer and saving it to DUMP_FILE (this will left untouched the current
+    # buffer, with its pending changes as well)
+    zellij action write-chars "%y"
+    zellij action write-chars "${line}G"
+    zellij action write-chars ":new"
+    zellij action write 13
+    zellij action write-chars "p"
+    # Remove first empty line
+    zellij action write-chars "ggd"
+    # Write temporary buffer in DUMP_FILE
+    zellij action write-chars ":write! $DUMP_FILE"
+    zellij action write 13
+    # Close temporary file buffer
+    zellij action write-chars ":buffer-close"
+    zellij action write 13
+
+    # Back to working pane
+    zellij action focus-next-pane
+
+    if command -v delta &> /dev/null; then
+        delta --paging always $file $DUMP_FILE
+    else
+        diff -u --color $file $DUMP_FILE | bat --plain --paging always
+    fi
+}
+
 # Print help and sleep $1 seconds
 function help() {
     echo "Usage: helix-ext <command> [options]"
@@ -203,6 +238,7 @@ function help() {
     echo "   -s, --status: print working dir status"
     echo "   -b, --blame: print blame info for current file"
     echo "   -B, --browse: browse remote repo at current file and line"
+    echo "- 'diff'"
     exit 1
 }
 
@@ -265,6 +301,9 @@ case "$1" in
             "*")
                 help 3
         esac
+        ;;
+    "diff")
+        diff_with_saved
         ;;
     *)
         help 3
