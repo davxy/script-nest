@@ -79,6 +79,15 @@ function search_folder() {
 
 function search_file() {
     file="$1"
+
+    tmpfile=""
+    if [ ! -f $file ]; then
+        tmpfile=$(mktemp)
+        dd if=$file of="$tmpfile" bs=1M count=1 2>/dev/null
+        cat $tmpfile
+        file=$tmpfile
+    fi
+
     preview_cmd="bat --style=full --color=always --highlight-line {1} $file"
     preview_win="up,~4,+{1}+4/2"
     while true; do
@@ -108,6 +117,8 @@ function search_file() {
             exit
         fi
     done
+
+    rm -f $tmpfile
 }
 
 while getopts "eiq:xfh" opt; do
@@ -121,12 +132,16 @@ while getopts "eiq:xfh" opt; do
     esac
 done
 
-# Check if there is a file or a folder
-shift $((OPTIND-1))
-if [ $# -gt 0 ]; then
-    path="$1"
+if [ -p /dev/stdin ]; then
+    path="/dev/stdin"
 else
-    path="$PWD"
+    # Check if there is a file or a folder
+    shift $((OPTIND-1))
+    if [ $# -gt 0 ]; then
+        path="$1"
+    else
+        path="$PWD"
+    fi
 fi
 
 # Optional flag for execution and exit behavior
@@ -142,9 +157,6 @@ if [ -d "$path" ]; then
     pushd "$path" > /dev/null
     search_folder
     popd > /dev/null
-elif [ -f "$path" ]; then
-    search_file "$path"
 else
-    echo "$path is neither a directory nor a regular file"
-    exit
+    search_file "$path"
 fi
