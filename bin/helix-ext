@@ -59,6 +59,9 @@ function current_file_and_line() {
 
     # Extract status line
     status_line=$(cat $DUMP_FILE | grep -E "(NOR|INS|SEL)")
+    # Manage multiple opened windows
+    status_line=$(echo $status_line | sed -n -E 's/.*(NOR|INS|SEL)[[:space:]]*(.*)/\1 \2/p')
+
     filename=$(echo $status_line | cut -d' ' -f2)
     # Try to detect if 'spinner' is present on the line
     # "⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷" 
