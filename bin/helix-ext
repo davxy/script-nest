@@ -13,9 +13,6 @@
 # - `git` for the `git` subcommand
 # - `gh` for the `git` subcommand `--browse` option
 
-CANARY_FILE="/tmp/helix_ext_canary"
-DUMP_FILE="/tmp/helix_ext_dump"
-
 # Opens a list of files.
 #
 # Input files should be a space separated list of "<name>:<line>"
@@ -39,6 +36,20 @@ function saturating_sub() {
     fi
 }
 
+# Construct a trampoline editor
+function make_editor() {
+    editor=$1
+    cat > "$editor" <<EOF
+#!/usr/bin/env bash
+zellij action focus-previous-pane
+zellij action write-chars ":open \$@"
+zellij action write 13
+EOF
+    chmod +x "$editor"
+    echo "$editor"
+}
+
+
 # Fetch file name and line number from the helix status bar.
 # Assumes the following helix configuration:
 #
@@ -59,6 +70,8 @@ function current_file_and_line() {
 
     # Extract status line
     status_line=$(cat $DUMP_FILE | grep -E "(NOR|INS|SEL)")
+    rm -f $DUMP_FILE
+    
     # Manage multiple opened windows
     status_line=$(echo $status_line | sed -n -E 's/.*(NOR|INS|SEL)[[:space:]]*(.*)/\1 \2/p')
 
@@ -224,6 +237,26 @@ function diff_with_saved() {
     else
         diff -u --color $file $DUMP_FILE | bat --plain --paging always
     fi
+
+    rm -f $DUMP_FILE
+}
+
+function gitui_pane() {
+    if [ -e $GITUI_FILE ]; then
+        return 1
+    fi
+    make_editor $GITUI_FILE
+    GIT_EDITOR=$GITUI_FILE gitui
+    rm -f $GITUI_FILE
+}
+
+function tree_pane() {
+    if [ -e $BROOT_FILE ]; then
+        return 1
+    fi
+    make_editor $BROOT_FILE
+    EDITOR=$BROOT_FILE broot
+    rm -f $BROOT_FILE
 }
 
 # Print help and sleep $1 seconds
@@ -238,12 +271,18 @@ function help() {
     echo "   -w, --workspace: search in git workspace (requires to be in a git repo)"
     echo "   -W, --workspace-inc-path: search in git workspace (include path)"
     echo "- 'git'"
+    echo "   -u, --ui: git-ui"
     echo "   -s, --status: print working dir status"
     echo "   -b, --blame: print blame info for current file"
     echo "   -B, --browse: browse remote repo at current file and line"
     echo "- 'diff'"
     exit 1
 }
+
+TMP_DIR="/tmp/helix-ext"
+CANARY_FILE="${TMP_DIR}/canary"
+
+mkdir -p $TMP_DIR
 
 if [ ! -e "$CANARY_FILE" ]; then
     # Be sure the parent process is Helix
@@ -255,15 +294,26 @@ if [ ! -e "$CANARY_FILE" ]; then
         echo "This script should be called from Helix (got $parent_name)"
         exit
     fi
-    touch "$CANARY_FILE"
+    echo $PPID > "$CANARY_FILE"
 
     direction="down"
+    if [[ $1 == "tree" ]]; then
+        direction="right"
+    fi
     # Re-execute the script in a working pane
     exec zellij run -n "helix-ext" -d $direction -- helix-ext $@
 fi
 
 # Remove the canary file
-rm "$CANARY_FILE"
+helix_pid=$(cat $CANARY_FILE)
+rm $CANARY_FILE
+
+TMP_DIR="${TMP_DIR}/${helix_pid}"
+mkdir -p ${TMP_DIR}
+
+DUMP_FILE="${TMP_DIR}/dump" 
+BROOT_FILE="${TMP_DIR}/broot-edit"
+GITUI_FILE="${TMP_DIR}/gitui-edit"
 
 case "$1" in
     "search") 
@@ -289,8 +339,8 @@ case "$1" in
         ;;
     "git")
         case $2 in
-            "-u"|"--gitui")
-                git_ui
+            "-u"|"--ui")
+                gitui_pane
                 ;;
             "-s"|"--status")
                 git_status
@@ -308,13 +358,18 @@ case "$1" in
     "diff")
         diff_with_saved
         ;;
+    "tree")
+        tree_pane
+        ;;
     *)
         help 3
         ;;
 esac
 
+# Remove temporary folder (if empty)
+rmdir --ignore-fail-on-non-empty "$TMP_DIR"
+
 # Close working pane
 zellij action close-pane
 
-# Optionally remove temporary file
-rm -f $DUMP_FILE
+
