@@ -46,9 +46,7 @@ zellij action write-chars ":open \$@"
 zellij action write 13
 EOF
     chmod +x "$editor"
-    echo "$editor"
 }
-
 
 # Fetch file name and line number from the helix status bar.
 # Assumes the following helix configuration:
@@ -71,7 +69,6 @@ function current_file_and_line() {
     # Extract status line
     status_line=$(cat $DUMP_FILE | grep -E "(NOR|INS|SEL)")
     rm -f $DUMP_FILE
-    
     # Manage multiple opened windows
     status_line=$(echo $status_line | sed -n -E 's/.*(NOR|INS|SEL)[[:space:]]*(.*)/\1 \2/p')
 
@@ -241,10 +238,19 @@ function diff_with_saved() {
     rm -f $DUMP_FILE
 }
 
+function resize_pane() {
+    counter=1
+    while [ $counter -le 3 ]; do
+        zellij action resize decrease
+        ((counter++))
+    done
+}
+
 function gitui_pane() {
     if [ -e $GITUI_FILE ]; then
         return 1
     fi
+    zellij action rename-pane "gitui"
     make_editor $GITUI_FILE
     GIT_EDITOR=$GITUI_FILE gitui
     rm -f $GITUI_FILE
@@ -254,9 +260,20 @@ function tree_pane() {
     if [ -e $BROOT_FILE ]; then
         return 1
     fi
+    zellij action rename-pane "broot"
     make_editor $BROOT_FILE
     EDITOR=$BROOT_FILE broot
     rm -f $BROOT_FILE
+}
+
+function term_pane() {
+    if [ -e $TERM_FILE ]; then
+        return 1
+    fi
+    zellij action rename-pane "term"
+    make_editor $TERM_FILE
+    EDITOR=$TERM_FILE /bin/bash
+    rm -f $TERM_FILE
 }
 
 # Print help and sleep $1 seconds
@@ -276,6 +293,8 @@ function help() {
     echo "   -b, --blame: print blame info for current file"
     echo "   -B, --browse: browse remote repo at current file and line"
     echo "- 'diff'"
+    echo "- 'tree'"
+    echo "- 'term'"
     exit 1
 }
 
@@ -301,6 +320,7 @@ if [ ! -e "$CANARY_FILE" ]; then
         direction="right"
     fi
     # Re-execute the script in a working pane
+    zellij action rename-pane "helix"
     exec zellij run -n "helix-ext" -d $direction -- helix-ext $@
 fi
 
@@ -314,6 +334,19 @@ mkdir -p ${TMP_DIR}
 DUMP_FILE="${TMP_DIR}/dump" 
 BROOT_FILE="${TMP_DIR}/broot-edit"
 GITUI_FILE="${TMP_DIR}/gitui-edit"
+TERM_FILE="${TMP_DIR}/term-edit"
+
+direction="down"
+if [[ $1 == "tree" ]]; then
+    direction="right"
+fi
+resize_pane $direction
+
+# Check if this is the first helix-ext program
+if [ -z "$(ls -A ${TMP_DIR})" ]; then
+    zellij action toggle-pane-frames
+fi
+touch "${TMP_DIR}/$$"
 
 case "$1" in
     "search") 
@@ -361,15 +394,24 @@ case "$1" in
     "tree")
         tree_pane
         ;;
+    "term")
+        term_pane
+        ;;
     *)
         help 3
         ;;
 esac
 
+# Remove helix-ext instance file
+rm -f "${TMP_DIR}/$$"
+# Check if this is the last helix-ext instance program
+if [ -z "$(ls -A ${TMP_DIR})" ]; then
+    zellij action toggle-pane-frames
+fi
+
 # Remove temporary folder (if empty)
 rmdir --ignore-fail-on-non-empty "$TMP_DIR"
 
+
 # Close working pane
 zellij action close-pane
-
-
