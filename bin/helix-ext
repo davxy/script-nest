@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.1.3
+# Version: 0.1.4
 #
 # Extensions used by Helix editor
 #
@@ -44,6 +44,7 @@ function make_editor() {
 zellij action focus-previous-pane
 zellij action write-chars ":open \$@"
 zellij action write 13
+zellij action focus-next-pane
 EOF
     chmod +x "$editor"
 }
@@ -85,6 +86,12 @@ function current_file_and_line() {
     echo "$filename:$line"
 }
 
+function current_file() {
+    fl=$(current_file_and_line)
+    file=$(echo $fl | cut -d':' -f1)
+    echo "$file"
+}
+
 # Search in current working directory
 # 
 # First argument should be any extra option to pass to `ff` script (like "f")
@@ -122,8 +129,7 @@ function search_ws() {
 
 # Seach in current buffer
 function search_buf() {
-    fl=$(current_file_and_line)
-    file=$(echo $fl | cut -d':' -f1)
+    file=$(current_file)
     if [[ $file == "[scratch]" ]]; then
         echo "Can't search in scratch buffer"; sleep 2; return 1
     fi
@@ -165,8 +171,7 @@ function git_blame() {
 }
 
 function git_browse() {
-    fl=$(current_file_and_line)
-    file=$(echo $fl | cut -d':' -f1)
+    file=$(current_file)
 
     git ls-files --error-unmatch "$file" 2> /dev/null
     if [ $? -ne 0 ]; then
@@ -261,8 +266,15 @@ function tree_pane() {
         return 1
     fi
     zellij action rename-pane "broot"
+
+    file=$(current_file)
+    if [[ $file == "[scratch]" ]]; then
+        file=
+    fi
+    file=$(dirname "$file")
+
     make_editor $BROOT_FILE
-    EDITOR=$BROOT_FILE broot
+    EDITOR=$BROOT_FILE broot "$file"
     rm -f $BROOT_FILE
 }
 
@@ -292,9 +304,10 @@ function help() {
     echo "   -s, --status: print working dir status"
     echo "   -b, --blame: print blame info for current file"
     echo "   -B, --browse: browse remote repo at current file and line"
-    echo "- 'diff'"
-    echo "- 'tree'"
-    echo "- 'term'"
+    echo "- 'diff': diff buffer unsaved modifications with backing file"
+    echo "- 'tree': open file tree (broot)"
+    echo "- 'term': open terminal"
+    echo "- 'clean': cleanup helix instance data"
     exit 1
 }
 
@@ -309,7 +322,8 @@ if [ ! -e "$CANARY_FILE" ]; then
     parent_pid=$PPID
     # # Get the name of the parent process using the PPID
     parent_name=$(ps -o comm= -p "$parent_pid")
-    if [[ $parent_name != "helix" ]]; then 
+    if [[ $parent_name != "helix" && $parent_name != "hx" ]]; then 
+        echo $parent_name > QUIT
         echo "This script should be called from Helix (got $parent_name)"
         exit
     fi
@@ -397,6 +411,11 @@ case "$1" in
     "term")
         term_pane
         ;;
+    "clean")
+        echo "Cleaning helix-ext data for current instance ($helix_pid)"
+        sleep 2
+        rm -rf $TMP_DIR
+        ;;
     *)
         help 3
         ;;
@@ -411,7 +430,6 @@ fi
 
 # Remove temporary folder (if empty)
 rmdir --ignore-fail-on-non-empty "$TMP_DIR"
-
 
 # Close working pane
 zellij action close-pane
