@@ -323,7 +323,6 @@ if [ ! -e "$CANARY_FILE" ]; then
     # # Get the name of the parent process using the PPID
     parent_name=$(ps -o comm= -p "$parent_pid")
     if [[ $parent_name != "helix" && $parent_name != "hx" ]]; then 
-        echo $parent_name > QUIT
         echo "This script should be called from Helix (got $parent_name)"
         exit
     fi
