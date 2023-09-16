@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 #
 # Preview zellij sessions
+#
+# Author: Davide Galassi <davxy@datawok.net>
+# Version: 0.1.0
 
 preview_func() {
 	tmpfile="/tmp/zellij-preview-dump"
@@ -11,13 +14,15 @@ preview_func() {
 		return
 	fi
 	zellij -s "$session" action dump-screen $tmpfile
-	bat --color always --language bash $tmpfile
+	bat --plain --color always --language bash $tmpfile
 	rm $tmpfile
 }
 
 export -f preview_func
-# s=$(zellij list-sessions | fzf --preview 'zellij -s {} action dump-screen /tmp/zellij-screen; bat --color always /tmp/zellij-screen')
-s=$(zellij list-sessions | fzf --preview 'preview_func {}')
+
+current=$(zellij list-sessions | grep "current" | sed 's/(current)//')
+
+s=$(zellij list-sessions | fzf --ansi --preview-window 'up' --preview 'preview_func {}')
 
 if [[ $s != "" ]]; then
 	zellij attach $s
