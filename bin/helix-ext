@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.1.4
+# Version: 0.1.5
 #
 # Extensions used by Helix editor
 #
@@ -17,13 +17,26 @@
 #
 # Input files should be a space separated list of "<name>:<line>"
 function open_files() {
-    files=$1
-    # Select original pana
+    local files=$1
+    # Select editor pane
     zellij action focus-previous-pane
     # Write down open command
     # Looks like carriage return is the way to do this (line feed doesn't work)
+    zellij action write 27  # ESC
     zellij action write-chars ":open $files"
-    zellij action write 13
+    zellij action write 13  # CR
+    # Move focus back to working pane
+    zellij action focus-next-pane
+}
+
+function search_text() {
+    local text=$1
+    # Select editor pane
+    zellij action focus-previous-pane
+    # Write down search command
+    zellij action write 27  # ESC
+    zellij action write-chars "/$text"
+    zellij action write 13  # CR
     # Move focus back to working pane
     zellij action focus-next-pane
 }
@@ -38,16 +51,36 @@ function saturating_sub() {
 
 # Construct a trampoline editor
 function make_editor() {
-    editor=$1
-    cat > "$editor" <<EOF
+    bin="$EXT_DIR/bin/edit"
+    cat > "$bin" <<EOF
 #!/usr/bin/env bash
 zellij action focus-previous-pane
+zellij action write 27
 zellij action write-chars ":open \$@"
 zellij action write 13
-zellij action focus-next-pane
+#zellij action focus-next-pane
+#zellij action write-chars ":q"
+#zellij action write 13
 EOF
-    chmod +x "$editor"
+    chmod +x "$bin"
 }
+
+# Construct a trampoline xdg_open
+function make_xdg_open() {
+    bin="$EXT_DIR/bin/xdg-open"
+    cat > "$bin" <<EOF
+#!/usr/bin/env bash
+/tmp/helix-ext/bin/edit "\$1"
+EOF
+    chmod +x "$bin"
+}
+
+function make_ext_dir() {
+    mkdir -p "$EXT_DIR/bin"
+    make_editor
+    make_xdg_open
+}
+
 
 # Fetch file name and line number from the helix status bar.
 # Assumes the following helix configuration:
@@ -135,11 +168,16 @@ function search_buf() {
     fi
 
     zellij action toggle-fullscreen
-    fl=$(ff "$file")
+    flq=$(ff -v "$file")
     zellij action toggle-fullscreen
 
+    fl=$(echo "$flq" | grep "result" | awk '{ print $2 }')
     if [[ "$fl" != "" ]]; then
         open_files "$fl"
+        query=$(echo "$flq" | grep "query" | awk '{ print $2}')
+        if [[ $query != "" ]]; then
+            search_text "$query"
+        fi
     fi
 }
 
@@ -171,7 +209,8 @@ function git_blame() {
 }
 
 function git_browse() {
-    file=$(current_file)
+    fl=$(current_file_and_line)
+    file=$(echo $fl | cut -d':' -f1)
 
     git ls-files --error-unmatch "$file" 2> /dev/null
     if [ $? -ne 0 ]; then
@@ -201,6 +240,7 @@ function git_browse() {
         sleep 3
         return 1
     fi
+
     gh browse "$fl" -b "$branch" -R "$remote_url"
     # Necessary sleep...
     sleep 1
@@ -256,8 +296,9 @@ function gitui_pane() {
         return 1
     fi
     zellij action rename-pane "gitui"
-    make_editor $GITUI_FILE
-    GIT_EDITOR=$GITUI_FILE gitui
+
+    touch $GITUI_FILE
+    GIT_EDITOR="$EXT_DIR/bin/edit" gitui
     rm -f $GITUI_FILE
 }
 
@@ -273,8 +314,8 @@ function tree_pane() {
     fi
     file=$(dirname "$file")
 
-    make_editor $BROOT_FILE
-    EDITOR=$BROOT_FILE broot "$file"
+    touch $BROOT_FILE
+    EDITOR="$EXT_DIR/bin/edit" broot "$file"
     rm -f $BROOT_FILE
 }
 
@@ -283,8 +324,9 @@ function term_pane() {
         return 1
     fi
     zellij action rename-pane "term"
-    make_editor $TERM_FILE
-    EDITOR=$TERM_FILE /bin/bash
+
+    touch $TERM_FILE
+    EDITOR="$EXT_DIR/bin/edit" /bin/bash
     rm -f $TERM_FILE
 }
 
@@ -311,21 +353,24 @@ function help() {
     exit 1
 }
 
-TMP_DIR="/tmp/helix-ext"
-CANARY_FILE="${TMP_DIR}/canary"
+EXT_DIR="/tmp/helix-ext"
+if [ ! -d "$EXT_DIR" ]; then
+    make_ext_dir
+fi
 
-mkdir -p $TMP_DIR
+CANARY_FILE="${EXT_DIR}/canary"
 
 if [ ! -e "$CANARY_FILE" ]; then
     # Be sure the parent process is Helix
     # Get the parent process ID (PPID) of the current process
     parent_pid=$PPID
-    # # Get the name of the parent process using the PPID
+    # Get the name of the parent process using the PPID
     parent_name=$(ps -o comm= -p "$parent_pid")
     if [[ $parent_name != "helix" && $parent_name != "hx" ]]; then 
         echo "This script should be called from Helix (got $parent_name)"
         exit
     fi
+    # Save the helix process instance pid in CANARY_FILE (to get it later)
     echo $PPID > "$CANARY_FILE"
 
     direction="down"
@@ -341,13 +386,13 @@ fi
 helix_pid=$(cat $CANARY_FILE)
 rm $CANARY_FILE
 
-TMP_DIR="${TMP_DIR}/${helix_pid}"
-mkdir -p ${TMP_DIR}
+INSTANCE_DIR="${EXT_DIR}/${helix_pid}"
+mkdir -p ${INSTANCE_DIR}
 
-DUMP_FILE="${TMP_DIR}/dump" 
-BROOT_FILE="${TMP_DIR}/broot-edit"
-GITUI_FILE="${TMP_DIR}/gitui-edit"
-TERM_FILE="${TMP_DIR}/term-edit"
+DUMP_FILE="${INSTANCE_DIR}/dump" 
+BROOT_FILE="${INSTANCE_DIR}/broot"
+GITUI_FILE="${INSTANCE_DIR}/gitui"
+TERM_FILE="${INSTANCE_DIR}/term"
 
 direction="down"
 if [[ $1 == "tree" ]]; then
@@ -355,11 +400,15 @@ if [[ $1 == "tree" ]]; then
 fi
 resize_pane $direction
 
-# Check if this is the first helix-ext program
-if [ -z "$(ls -A ${TMP_DIR})" ]; then
+# Check if this is the first helix-ext program for this helix instance
+if [ -z "$(ls -A ${INSTANCE_DIR})" ]; then
     zellij action toggle-pane-frames
 fi
-touch "${TMP_DIR}/$$"
+# Create a tag file for the program
+touch "${INSTANCE_DIR}/$$"
+
+# Default to custom bins (xdg-open)
+export PATH="$EXT_DIR/bin:$PATH"
 
 case "$1" in
     "search") 
@@ -411,9 +460,9 @@ case "$1" in
         term_pane
         ;;
     "clean")
-        echo "Cleaning helix-ext data for current instance ($helix_pid)"
+        echo "Removing all helix-ext data for current instance ($helix_pid)"
         sleep 2
-        rm -rf $TMP_DIR
+        rm -rf $INSTANCE_DIR
         ;;
     *)
         help 3
@@ -421,14 +470,14 @@ case "$1" in
 esac
 
 # Remove helix-ext instance file
-rm -f "${TMP_DIR}/$$"
+rm -f "${INSTANCE_DIR}/$$"
 # Check if this is the last helix-ext instance program
-if [ -z "$(ls -A ${TMP_DIR})" ]; then
+if [ -z "$(ls -A ${INSTANCE_DIR})" ]; then
     zellij action toggle-pane-frames
 fi
 
-# Remove temporary folder (if empty)
-rmdir --ignore-fail-on-non-empty "$TMP_DIR"
+# Remove instance folder (if empty)
+rmdir --ignore-fail-on-non-empty "$INSTANCE_DIR"
 
 # Close working pane
 zellij action close-pane

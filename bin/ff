@@ -21,6 +21,7 @@ ignore_case="+i"
 query=""
 exit_on_exec=0
 fzf_nth="3.."
+verbose=0
 
 # FZF key bindings
 COPY_FILE_PATH='ctrl-y:execute(echo -n {1}:{2} | wl-copy)'
@@ -34,6 +35,7 @@ function help() {
     echo "  -q: Query"
     echo "  -x: Exit on execution"
     echo "  -f: Include file path"
+    echo "  -v: Verbose result"
     echo "  FILE: Specify the input file or directory to search into (default CWD)"
     exit
 }
@@ -68,6 +70,9 @@ function search_folder() {
         if [[ $edit == 1 && $results != "" ]]; then
             $EDITOR $results
         else
+            if [[ $verbose == 1 ]]; then
+                echo "query: $query"
+            fi
             IFS=$'\n' mapfile -t selected_matches <<< "$results"
             for element in "${selected_matches[@]}"; do
                 echo $element
@@ -113,7 +118,12 @@ function search_file() {
         if [[ $edit == 1 ]]; then
             $EDITOR $fl
         else
-            echo $fl
+            if [[ $verbose == 1 ]]; then
+                echo "result: $fl"
+                echo "query: $query"
+            else
+                echo $fl
+            fi
             exit
         fi
     done
@@ -121,13 +131,14 @@ function search_file() {
     rm -f $tmpfile
 }
 
-while getopts "eiq:xfh" opt; do
+while getopts "eiq:xfhv" opt; do
     case $opt in
         e) edit=1 ;;
         i) ignore_case="-i" ;;
         q) query="$OPTARG" ;;
         x) exit_on_exec=1 ;;
         f) fzf_nth="1.." ;;
+        v) verbose=1 ;;
         h | *) help ;;
     esac
 done
