@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.1.5
+# Version: 0.1.6
 #
 # Extensions used by Helix editor
 #
@@ -12,42 +12,6 @@
 # - `bat` for the `search --buffer` option
 # - `git` for the `git` subcommand
 # - `gh` for the `git` subcommand `--browse` option
-
-# Opens a list of files.
-#
-# Input files should be a space separated list of "<name>:<line>"
-function open_files() {
-    local files=$1
-    # Select editor pane
-    zellij action focus-previous-pane
-    # Write down open command
-    # Looks like carriage return is the way to do this (line feed doesn't work)
-    zellij action write 27  # ESC
-    zellij action write-chars ":open $files"
-    zellij action write 13  # CR
-    # Move focus back to working pane
-    zellij action focus-next-pane
-}
-
-function search_text() {
-    local text=$1
-    # Select editor pane
-    zellij action focus-previous-pane
-    # Write down search command
-    zellij action write 27  # ESC
-    zellij action write-chars "/$text"
-    zellij action write 13  # CR
-    # Move focus back to working pane
-    zellij action focus-next-pane
-}
-
-function saturating_sub() {
-    if (( $2 >= $1 )); then
-        echo 1
-    else
-        echo $(( $1 - $2 ))
-    fi
-}
 
 # Construct a trampoline editor
 function make_editor() {
@@ -81,8 +45,45 @@ function make_ext_dir() {
     make_xdg_open
 }
 
+# Opens a list of files.
+#
+# Input files should be a space separated list of "<name>:<line>"
+function open_files() {
+    local files=$1
+    # Select editor pane
+    zellij action focus-previous-pane
+    # Write down open command
+    # Looks like carriage return is the way to do this (line feed doesn't work)
+    zellij action write 27  # ESC
+    zellij action write-chars ":open $files"
+    zellij action write 13  # CR
+    # Move focus back to working pane
+    zellij action focus-next-pane
+}
 
-# Fetch file name and line number from the helix status bar.
+# Search some text in helix current buffer
+function search_text() {
+    local text=$1
+    # Select editor pane
+    zellij action focus-previous-pane
+    # Write down search command
+    zellij action write 27  # ESC
+    zellij action write-chars "/$text"
+    zellij action write 13  # CR
+    # Move focus back to working pane
+    zellij action focus-next-pane
+}
+
+# Saturated subtraction
+function saturating_sub() {
+    if (( $2 >= $1 )); then
+        echo 1
+    else
+        echo $(( $1 - $2 ))
+    fi
+}
+
+# Get current file name and line number from the helix status bar.
 # Assumes the following helix configuration:
 #
 # ```toml
@@ -119,6 +120,7 @@ function current_file_and_line() {
     echo "$filename:$line"
 }
 
+# Get current file name
 function current_file() {
     fl=$(current_file_and_line)
     file=$(echo $fl | cut -d':' -f1)
@@ -181,7 +183,7 @@ function search_buf() {
     fi
 }
 
-
+# Print git status
 function git_status() {
     zellij action toggle-fullscreen
     file=$(git status --short | \
@@ -196,6 +198,7 @@ function git_status() {
     open_files "${file}:1"
 }
 
+# Print git blame information
 function git_blame() {
     fl=$(current_file_and_line)
     file=$(echo $fl | cut -d':' -f1)
@@ -208,6 +211,7 @@ function git_blame() {
     git blame -L $start,+100 $file --color-by-age --color-lines
 }
 
+# Open current file and line in a browser using `gh` tool
 function git_browse() {
     fl=$(current_file_and_line)
     file=$(echo $fl | cut -d':' -f1)
@@ -246,6 +250,7 @@ function git_browse() {
     sleep 1
 }
 
+# Diff current buffer with the one in the disk
 function diff_with_saved() {
     fl=$(current_file_and_line)
     file=$(echo $fl | cut -d':' -f1)
@@ -283,6 +288,7 @@ function diff_with_saved() {
     rm -f $DUMP_FILE
 }
 
+# Resize a pane
 function resize_pane() {
     counter=1
     while [ $counter -le 3 ]; do
@@ -291,6 +297,7 @@ function resize_pane() {
     done
 }
 
+# Open gitui pane
 function gitui_pane() {
     if [ -e $GITUI_FILE ]; then
         return 1
@@ -302,6 +309,7 @@ function gitui_pane() {
     rm -f $GITUI_FILE
 }
 
+# Open broot pane
 function tree_pane() {
     if [ -e $BROOT_FILE ]; then
         return 1
@@ -319,6 +327,7 @@ function tree_pane() {
     rm -f $BROOT_FILE
 }
 
+# Open terminal pane
 function term_pane() {
     if [ -e $TERM_FILE ]; then
         return 1
