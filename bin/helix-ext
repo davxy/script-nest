@@ -250,6 +250,18 @@ function git_browse() {
     sleep 1
 }
 
+# Open markdown file table of contents
+function markdown_toc() {
+    file=$(current_file)
+    zellij action toggle-fullscreen
+    choice=$(cat $file | grep -n "^#" | sed 's/#/  /g' | awk -F':' '{printf("%4s - %s\n", $1, $2)}' | fzf --no-sort --exact --cycle --layout=reverse --header="'$file' TOC")
+    zellij action toggle-fullscreen
+    line=$(echo $choice | cut -d' ' -f1)
+    if [[ "$line" != "" ]]; then
+        open_files "$file:$line"
+    fi
+}
+
 # Diff current buffer with the one in the disk
 function diff_with_saved() {
     fl=$(current_file_and_line)
@@ -355,10 +367,13 @@ function help() {
     echo "   -s, --status: print working dir status"
     echo "   -b, --blame: print blame info for current file"
     echo "   -B, --browse: browse remote repo at current file and line"
+    echo "- 'markdown'"
+    echo "   - t, --toc: table of contents"
     echo "- 'diff': diff buffer unsaved modifications with backing file"
     echo "- 'tree': open file tree (broot)"
     echo "- 'term': open terminal"
     echo "- 'clean': cleanup helix instance data"
+    sleep $1
     exit 1
 }
 
@@ -454,6 +469,15 @@ case "$1" in
                 ;;
             "-B"|"--browse")
                 git_browse
+                ;;
+            "*")
+                help 3
+        esac
+        ;;
+    "markdown")
+        case $2 in
+            "-t"|"--toc")
+                markdown_toc
                 ;;
             "*")
                 help 3
