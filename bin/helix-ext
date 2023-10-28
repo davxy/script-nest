@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.1.6
+# Version: 0.1.7
 #
 # Extensions used by Helix editor
 #
@@ -22,7 +22,7 @@ zellij action focus-previous-pane
 zellij action write 27
 zellij action write-chars ":open \$@"
 zellij action write 13
-#zellij action focus-next-pane
+zellij action focus-next-pane
 #zellij action write-chars ":q"
 #zellij action write 13
 EOF
@@ -34,7 +34,11 @@ function make_xdg_open() {
     bin="$EXT_DIR/bin/xdg-open"
     cat > "$bin" <<EOF
 #!/usr/bin/env bash
-/tmp/helix-ext/bin/edit "\$1"
+if [[ -f "\$1" ]]; then
+    /tmp/helix-ext/bin/edit "\$1"
+else
+    /usr/bin/xdg-open "\$1"
+fi
 EOF
     chmod +x "$bin"
 }
@@ -212,13 +216,21 @@ function git_blame() {
 }
 
 # Open current file and line in a browser using `gh` tool
-function git_browse() {
+function git_browse() {   
+    # Select original pane
+    zellij action focus-previous-pane
+    # Capture output of the original pane
+    zellij action dump-screen "/tmp/helix-ext/dupone"
+    # Back to working pane
+    zellij action focus-next-pane
+
     fl=$(current_file_and_line)
-    file=$(echo $fl | cut -d':' -f1)
+
+    file=$(echo $fl | cut -d':' -f1) 
 
     git ls-files --error-unmatch "$file" 2> /dev/null
     if [ $? -ne 0 ]; then
-        # Not in a git working directory. Open the repo root
+        # Not versioned file. Open the repo root
         fl=""
     fi
 
@@ -247,7 +259,7 @@ function git_browse() {
 
     gh browse "$fl" -b "$branch" -R "$remote_url"
     # Necessary sleep...
-    sleep 1
+    sleep 3
 }
 
 # Open markdown file table of contents
@@ -332,11 +344,13 @@ function tree_pane() {
     if [[ $file == "[scratch]" ]]; then
         file=
     fi
-    file=$(dirname "$file")
+    dir=$(dirname "$file")
 
     touch $BROOT_FILE
-    EDITOR="$EXT_DIR/bin/edit" broot "$file"
+    EDITOR="$EXT_DIR/bin/edit" broot "$dir"
     rm -f $BROOT_FILE
+
+    
 }
 
 # Open terminal pane
@@ -424,10 +438,11 @@ if [[ $1 == "tree" ]]; then
 fi
 resize_pane $direction
 
-# Check if this is the first helix-ext program for this helix instance
-if [ -z "$(ls -A ${INSTANCE_DIR})" ]; then
-    zellij action toggle-pane-frames
-fi
+# # Check if this is the first helix-ext program for this helix instance
+# if [ -z "$(ls -A ${INSTANCE_DIR})" ]; then
+#     zellij action toggle-pane-frames
+# fi
+
 # Create a tag file for the program
 touch "${INSTANCE_DIR}/$$"
 
@@ -504,10 +519,10 @@ esac
 
 # Remove helix-ext instance file
 rm -f "${INSTANCE_DIR}/$$"
-# Check if this is the last helix-ext instance program
-if [ -z "$(ls -A ${INSTANCE_DIR})" ]; then
-    zellij action toggle-pane-frames
-fi
+# # Check if this is the last helix-ext instance program
+# if [ -z "$(ls -A ${INSTANCE_DIR})" ]; then
+#     zellij action toggle-pane-frames
+# fi
 
 # Remove instance folder (if empty)
 rmdir --ignore-fail-on-non-empty "$INSTANCE_DIR"
