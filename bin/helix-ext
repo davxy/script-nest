@@ -135,10 +135,18 @@ function current_file() {
 # 
 # First argument should be any extra option to pass to `ff` script (like "f")
 function search_cwd() {
-    opts="x"$1
+    opts="-x"
+    if [[ $1 = "-f" ]]; then
+        opts="${opts}f"
+        shift
+    fi
+    query=""
+    if [[ $1 == "-q" && ${#2} != 1 ]]; then
+        query="$2"
+    fi
 
     zellij action toggle-fullscreen
-    file_paths=$(ff -$opts)
+    file_paths=$(ff "$opts" -q "$query")
     zellij action toggle-fullscreen
 
     new_paths=""
@@ -162,19 +170,24 @@ function search_ws() {
         echo "Not in a git working directory"; sleep 2; return 1
     fi
     cd $ws
-    search_cwd $1
+    search_cwd $@
     cd $wd
 }
 
 # Seach in current buffer
 function search_buf() {
+    query=""
+    if [[ $1 == "-q" && ${#2} != 1 ]]; then
+        query="$2"
+    fi
+
     file=$(current_file)
     if [[ $file == "[scratch]" ]]; then
         echo "Can't search in scratch buffer"; sleep 2; return 1
     fi
 
     zellij action toggle-fullscreen
-    flq=$(ff -v "$file")
+    flq="$(ff -v -q "$query" "$file")"
     zellij action toggle-fullscreen
 
     fl=$(echo "$flq" | grep "result" | awk '{ print $2 }')
@@ -217,21 +230,18 @@ function git_blame() {
 
 # Open current file and line in a browser using `gh` tool
 function git_browse() {   
-    # Select original pane
-    zellij action focus-previous-pane
-    # Capture output of the original pane
-    zellij action dump-screen "/tmp/helix-ext/dupone"
-    # Back to working pane
-    zellij action focus-next-pane
-
     fl=$(current_file_and_line)
-
     file=$(echo $fl | cut -d':' -f1) 
+    line=$(echo $fl | cut -d':' -f2)
+    file_path=$(realpath $file)
 
-    git ls-files --error-unmatch "$file" 2> /dev/null
+    git ls-files --error-unmatch "$file_path" >/dev/null 2>&1
     if [ $? -ne 0 ]; then
         # Not versioned file. Open the repo root
         fl=""
+    else
+        git_root=$(git rev-parse --show-toplevel)
+        fl="${file_path#$git_root/}:$line"
     fi
 
     branch=$(git symbolic-ref --short HEAD)
@@ -415,10 +425,16 @@ if [ ! -e "$CANARY_FILE" ]; then
     if [[ $1 == "tree" ]]; then
         direction="right"
     fi
+
+    read userinput
+
     # Re-execute the script in a working pane
     zellij action rename-pane "helix"
-    exec zellij run -n "helix-ext" -d $direction -- helix-ext $@
+    exec zellij run -n "helix-ext" -d $direction -- helix-ext $@ "$userinput"
 fi
+
+# TODO: testing if improves reliability
+sleep 0.1
 
 # Remove the canary file
 helix_pid=$(cat $CANARY_FILE)
@@ -453,19 +469,19 @@ case "$1" in
     "search") 
         case $2 in
             "-b"|"--buffer")
-                search_buf
+                search_buf -q "$3"
                 ;;
             "-c"|"--current")
-                search_cwd
+                search_cwd -q "$3"
                 ;;
             "-C"|"--current-inc-path")
-                search_cwd "f"
+                search_cwd -f -q "$3"
                 ;;
             "-w"|"--workspace")
-                search_ws
+                search_ws -q "$3"
                 ;;
             "-W"|"--workspace-inc-path")
-                search_ws "f"
+                search_ws -f -q "$3"
                 ;;
             "*")
                 help 3
