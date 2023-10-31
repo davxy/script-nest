@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.1.3
+# Version: 0.1.4
 #
 # Fast tool to search into files using fuzzy finder
 #
@@ -22,6 +22,7 @@ query=""
 exit_on_exec=0
 fzf_nth="3.."
 verbose=0
+preview_ratio="70%"
 
 # FZF key bindings
 COPY_FILE_PATH='ctrl-y:execute(echo -n {1}:{2} | wl-copy)'
@@ -36,25 +37,30 @@ function help() {
     echo "  -x: Exit on execution"
     echo "  -f: Include file path"
     echo "  -v: Verbose result"
+    echo "  -b: Binary file"
     echo "  FILE: Specify the input file or directory to search into (default CWD)"
     exit
 }
 
 function search_folder() {
+    preview_cmd="bat --style=full --color=always --highlight-line {2} {1}"
+    preview_win="up,~4,+{1}+4/2,$preview_ratio"
     while true; do
         # Search using rg and fzf with preview
         out=$(rg . --line-number --no-heading --glob '!.git' | \
-              fzf -m ${ignore_case} \
+              fzf -m \
+                ${ignore_case} \
+                --ansi \
+                --exact \
                 --no-sort \
                 --layout=reverse-list \
-                --exact \
                 --delimiter ':' \
                 --nth "$fzf_nth" \
                 --exit-0 \
                 --multi \
                 --print-query --query="$query" \
-                --preview 'bat --style=full --color=always --highlight-line {2} {1}' \
-                --preview-window 'up,~4,+{2}+4/2' \
+                --preview "$preview_cmd" \
+                --preview-window "$preview_win" \
                 --bind "$KEYS")
 
         if [[ $? != 0 ]]; then
@@ -88,20 +94,35 @@ function search_file() {
     tmpfile=""
     if [ ! -f $file ]; then
         tmpfile=$(mktemp)
-        dd if=$file of="$tmpfile" bs=1M count=1 2>/dev/null
-        cat $tmpfile
+        touch $tmpfile
+        # Dump at most 10M ()
+        dd if=$file of="$tmpfile" iflag=fullblock bs=1M count=101 2>/dev/null
+        file_size_bytes=$(stat -c %s $tmpfile)
+        file_size_mib=$(echo "scale=2; $file_size_bytes / (1024 * 1024)" | bc)
+        # Compare file size in MiB with 100
+        if (( $(echo "$file_size_mib > 100" | bc -l) )); then
+            truncate -s 100M $tmpfile
+            mv "$tmpfile" "${tmpfile}-truncated"
+            tmpfile="${tmpfile}-truncated"
+        fi
         file=$tmpfile
     fi
 
     preview_cmd="bat --style=full --color=always --highlight-line {1} $file"
-    preview_win="up,~4,+{1}+4/2"
+    preview_win="up,~4,+{1}+4/2,$preview_ratio"
     while true; do
         result=$(bat --plain --color always $file | \
             nl -ba -w1 -s": " | \
-            fzf --ansi +i --delimiter ':' \
-                --exact --no-sort --nth "2.." \
-                --print-query --query="$query" \
+            fzf \
+                --ansi \
+                ${ignore_case} \
+                --delimiter ':' \
+                --exact \
+                --no-sort \
                 --layout=reverse-list \
+                --nth "2.." \
+                --print-query \
+                --query="$query" \
                 --preview "$preview_cmd" \
                 --preview-window "$preview_win" | \
             awk '{ print $1 }' |
