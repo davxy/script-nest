@@ -1,37 +1,67 @@
 #!/usr/bin/env bash
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.1.2
+# Version: 0.1.3
 #
-# Simplest pomodoro timer CLI
+# The simplest pomodoro timer CLI
+#
+# Depends on:
+# - aplay (alsa-utils): to play sounds
+# - notify-send (libnotify): to send notifications
 
-aduration=30
-pduration=5
+# Defaults
+config_file="$HOME/.config/pomo.rc"
+
+activity_duration=30
+pause_duration=5
+notification_send=1
+sound_play=1
+
+if [ -e $config_file ]; then
+    source $config_file
+fi
 
 while getopts "a:p:s:h" opt; do
     case $opt in
-        a) aduration=$OPTARG ;;
-        p) pduration=$OPTARG ;;
-        s) soundfile=$OPTARG ;;
+        a) activity_duration=$OPTARG ;;
+        p) pause_duration=$OPTARG ;;
+        s) ring_file=$OPTARG ;;
         h|*) 
             echo "Usage: pomo [-a <duration>] [-p <duration>] [-s <path>]"
-            echo "  -a: activity duration is minutes (default ${aduration})"
-            echo "  -p: pause duration is minutes (default ${pduration}). Set to 0 for one shot activity"
+            echo "  -a: activity duration is minutes (default ${activity_duration})"
+            echo "  -p: pause duration is minutes (default ${pause_duration}). Set to 0 for one shot activity"
             echo "  -s: path to a wav file to play between activities (reproduced via 'aplay')"
             exit 0
             ;;
     esac
 done
 
-echo "Start time:        $(date '+%H:%M')"
-echo "Activity duration: ${aduration}m"
-echo "Pause duration:    ${pduration}m"
-echo "Sound file:        ${soundfile}"
+echo "Start time:             $(date '+%H:%M')"
+echo "Activity duration:      ${activity_duration} min"
+echo "Pause duration:         ${pause_duration} min"
+
+which notify-send >/dev/null 2>&1
+if [[ $? == 1 ]]; then
+    notification_send=0
+    echo "Notifications messages: off"
+else
+    echo "Notifications messages: on"
+fi
+
+which aplay >/dev/null 2>&1
+if [[ $? == 1 || $ring_file == "" ]]; then
+    sound_play=0
+    echo "Notifications sound:    off"
+else
+    echo "Notifications sound:    '$ring_file'"
+fi
+
+echo ""
 
 # last notification id
 notification_id="NAN"
                                            
-# Args: duration, msg, soundfile
+# Args: duration, msg, ring_file
 function notify() {
     duration=$1
     msg=$2
@@ -50,30 +80,32 @@ function notify() {
         return
     fi
 
-    notification_id=$(notify-send \
-        -u critical -t 0 -p -r $notification_id \
-        -a "POMO" "$notification_head" "$notification_body")
+    if [[ $notification_send == 1 ]]; then
+        notification_id=$(notify-send \
+            -u critical -t 0 -p -r $notification_id \
+            -a "POMO" "$notification_head" "$notification_body")
+    fi
 
-    if [[ $sound != "" ]]; then
+    if [[ $sound_play == 1 ]]; then
         aplay -q "$3"
     fi
 }
 
-if [[ $pduration == 0 ]]; then
+if [[ $pause_duration == 0 ]]; then
     breakmsg="TIME OVER"
 else
-    breakmsg="TIME FOR A BREAK (${pduration}m)"
+    breakmsg="TIME FOR A BREAK (${pause_duration} min)"
 fi
 
-aduration_sec=$((aduration * 60))
-pduration_sec=$((pduration * 60))
+activity_duration_sec=$((activity_duration * 60))
+pause_duration_sec=$((pause_duration * 60))
 
 while true; do
-    notify $aduration "TIME FOR WORK (${aduration}m)" $soundfile
-    sleep $aduration_sec
-    notify $pduration "$breakmsg" $soundfile
-    if [[ $pduration == 0 ]]; then
+    notify $activity_duration "TIME FOR WORK (${activity_duration} min)" $ring_file
+    sleep $activity_duration_sec
+    notify $pause_duration "$breakmsg" $ring_file
+    if [[ $pause_duration == 0 ]]; then
         break
     fi
-    sleep $pduration_sec
+    sleep $pause_duration_sec
 done
