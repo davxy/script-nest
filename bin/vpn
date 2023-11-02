@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.1.0
+# Version: 0.1.1
 #
 # Wrapper tool to manage wireguard connections
 
@@ -12,7 +12,7 @@ function connect() {
         echo "A wireguard connection already exists."
         disconnect
     fi
-    curr_wg=$2
+    curr_wg=$1
     if [[ $curr_wg == "" ]]; then
         echo "You need to specify a profile."
         echo "Use 'list' to see the available profiles."
@@ -62,30 +62,30 @@ function help() {
     echo ""
     echo "Commands:"
     echo ""
-    echo "  connect: connects to a wireguard profile which configuration name is given"
+    echo "  c,connect: connects to a wireguard profile which configuration name is given"
     echo "           after the action. The configuration name should be passed without"
     echo "           extension and be already installed in the '/etc/wireguard' folder."
     echo ""
-    echo "  disconnect: disconnect from wireguard."
+    echo "  d,disconnect: disconnect from wireguard."
     echo ""
-    echo "  status: get current connection status."
+    echo "  s,status: get current connection status."
     echo ""
-    echo "  list: list available profiles (* currently connected profile)."
+    echo "  l,list: list available profiles (* currently connected profile)."
     exit
 }
 
 case $1 in
-    connect)
-        connect $@
+    "c"|"connect")
+        connect $2
         ;;
-    disconnect)
-        disconnect $@
+    "d"|"disconnect")
+        disconnect
         ;;
-    status)
-        status $@
+    "s"|"status")
+        status
         ;;
-    list)
-        list $@
+    "l"|"list")
+        list
         ;;
     *)
         help
