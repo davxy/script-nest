@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.1.5
+# Version: 0.1.6
 #
 # Fast tool to search into files using fuzzy finder
 #
@@ -64,7 +64,7 @@ function search_folder() {
                 --bind "$KEYS")
 
         if [[ $? != 0 ]]; then
-            exit
+            break
         fi
 
         # Extract new query
@@ -83,7 +83,7 @@ function search_folder() {
             for element in "${selected_matches[@]}"; do
                 echo $element
             done
-            exit
+            break
         fi
     done
 }
@@ -129,7 +129,7 @@ function search_file() {
             sed 's/:$//')
 
         if [[ $result == "" ]]; then
-            exit
+            break
         fi
 
         # Extract new query
@@ -146,7 +146,7 @@ function search_file() {
             else
                 echo $fl
             fi
-            exit
+            break
         fi
     done
 
