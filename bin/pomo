@@ -9,14 +9,16 @@
 # - aplay (alsa-utils): to play sounds
 # - notify-send (libnotify): to send notifications
 
-# Defaults
+# Config file
 config_file="$HOME/.config/pomo.rc"
 
+# Defaults
 activity_duration=30
 pause_duration=5
 notification_send=1
 sound_play=1
 
+# Source config file to overwrite defaults
 if [ -e $config_file ]; then
     source $config_file
 fi
