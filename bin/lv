@@ -43,7 +43,7 @@ fi
 
 if [[ $preview == "y" ]]; then
   tail $follow -n +1 $logfile | nl | fzf --no-sort --exact --tac \
-    --preview "batcat --style=full --color=always --highlight-line {1} $logfile" \
+    --preview "bat --style=full --color=always --highlight-line {1} $logfile" \
     --preview-window 'up,+{1}+4/2'
 else
   tail $follow -n +1 $logfile | nl | fzf --no-sort --exact --tac 
