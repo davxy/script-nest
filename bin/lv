@@ -36,7 +36,9 @@ for arg in "$@"; do
   esac
 done
 
-if [ ! -f "$logfile" ]; then
+if [ -p /dev/stdin ]; then
+    logfile="/dev/stdin"
+elif [ ! -f "$logfile" ]; then
   echo "File not found $logfile"
   exit
 fi
