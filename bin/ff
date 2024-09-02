@@ -47,7 +47,7 @@ function search_folder() {
     preview_win="up,~4,+{2}+4/2,$preview_ratio"
     while true; do
         # Search using rg and fzf with preview
-        out=$(rg . --line-number --no-heading --glob '!.git' | \
+        out=$(rg . --line-number --no-heading --glob '!.git' * | \
               fzf -m \
                 ${ignore_case} \
                 --ansi \
