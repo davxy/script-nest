@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.1.1
+# Version: 0.2.0
 #
 # Wrapper tool to manage wireguard connections
+
+config_dir="/etc/wireguard"
+
+if [[ "$VPN_CONFIG_DIR" != "" ]]; then
+    config_dir="$VPN_CONFIG_DIR"
+fi
 
 curr_wg=$(sudo wg show | grep interface | awk '{ print $2 }')
 
@@ -19,7 +25,10 @@ function connect() {
         exit
     fi
     echo "Connecting to: '$curr_wg'"
-    sudo wg-quick up $curr_wg
+    if [[ "$curr_wg" != *.conf ]]; then
+        curr_wg="${curr_wg}.conf"
+    fi
+    sudo wg-quick up "$config_dir/$curr_wg"
     status
 }
 
@@ -29,7 +38,10 @@ function disconnect() {
         exit
     fi
     echo "Disconnecting from: $curr_wg"
-    sudo wg-quick down $curr_wg
+    if [[ "$curr_wg" != *.conf ]]; then
+        curr_wg="${curr_wg}.conf"
+    fi
+    sudo wg-quick down "$config_dir/$curr_wg"
 }
 
 function status() {
@@ -41,7 +53,13 @@ function status() {
 }
 
 function list() {
-    profiles=$(sudo ls /etc/wireguard)
+    # Check if we require sudo to read the folder
+    if ls "$config_dir" >/dev/null 2>&1; then
+        profiles=$(ls "$config_dir")
+    else
+        profiles=$(sudo ls "$config_dir")
+    fi
+
     if [[ $profiles == "" ]]; then
         echo "No available profiles"
         exit
@@ -62,15 +80,17 @@ function help() {
     echo ""
     echo "Commands:"
     echo ""
-    echo "  c,connect: connects to a wireguard profile which configuration name is given"
-    echo "           after the action. The configuration name should be passed without"
-    echo "           extension and be already installed in the '/etc/wireguard' folder."
+    echo "  c,connect: connects to a the specified wireguard profile"
     echo ""
     echo "  d,disconnect: disconnect from wireguard."
     echo ""
     echo "  s,status: get current connection status."
     echo ""
     echo "  l,list: list available profiles (* currently connected profile)."
+    echo ""
+    echo "The wireguard configuration files folder can be specified using the"
+    echo "'VPN_CONFIG_FILES' environment variable. If not set, '/etc/wireguard'"
+    echo "is used."
     exit
 }
 
