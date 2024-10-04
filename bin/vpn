@@ -60,6 +60,7 @@ function list() {
         profiles=$(sudo ls "$config_dir")
     fi
 
+    echo "Checking $config_dir"
     if [[ $profiles == "" ]]; then
         echo "No available profiles"
         exit

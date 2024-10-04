@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Converts a list of base 10 digits to base 16
+# Converts a sequence of base 10 numbers to base 16
 
 for n in $@; do
     a=$(echo $n | sed 's/[^0-9]//g')
