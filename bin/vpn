@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.2.0
+# Version: 0.3.0
 #
 # Wrapper tool to manage wireguard connections
 
@@ -20,9 +20,17 @@ function connect() {
     fi
     curr_wg=$1
     if [[ $curr_wg == "" ]]; then
-        echo "You need to specify a profile."
-        echo "Use 'list' to see the available profiles."
-        exit
+        curr_wg="$config_dir/default.conf"
+        if [[ -e "$curr_wg" ]]; then
+            if [ -L "$curr_wg" ]; then
+                curr_wg=$(readlink "$curr_wg")
+            fi
+            echo "Try to connect to default: $curr_wg"
+        else
+            echo "You need to specify a profile."
+            list
+            exit
+        fi
     fi
     echo "Connecting to: '$curr_wg'"
     if [[ "$curr_wg" != *.conf ]]; then
