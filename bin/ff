@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.1.6
+# Version: 0.1.7
 #
 # Fast tool to search into files using fuzzy finder
 #
@@ -23,6 +23,7 @@ exit_on_exec=0
 fzf_nth="3.."
 verbose=0
 preview_ratio="70%"
+cycle=""
 
 # FZF key bindings
 COPY_FILE_PATH='ctrl-y:execute(echo -n {1}:{2} | wl-copy)'
@@ -38,6 +39,7 @@ function help() {
     echo "  -f: Include file path"
     echo "  -v: Verbose result"
     echo "  -b: Binary file"
+    echo "  -c: Enable cyclic scrolling"
     echo "  FILE: Specify the input file or directory to search into (default CWD)"
     exit
 }
@@ -50,6 +52,7 @@ function search_folder() {
         out=$(rg . --line-number --no-heading --glob '!.git' * | \
               fzf -m \
                 ${ignore_case} \
+                ${cycle} \
                 --ansi \
                 --exact \
                 --no-sort \
@@ -115,6 +118,7 @@ function search_file() {
             nl -ba -w1 -s": " | \
             fzf \
                 --ansi \
+                ${cycle} \
                 ${ignore_case} \
                 --delimiter ':' \
                 --exact \
@@ -153,7 +157,7 @@ function search_file() {
     rm -f $tmpfile
 }
 
-while getopts "eiq:xfhv" opt; do
+while getopts "ceiq:xfhv" opt; do
     case $opt in
         e) edit=1 ;;
         i) ignore_case="-i" ;;
@@ -161,6 +165,7 @@ while getopts "eiq:xfhv" opt; do
         x) exit_on_exec=1 ;;
         f) fzf_nth="1.." ;;
         v) verbose=1 ;;
+        c) cycle="--cycle" ;;
         h | *) help ;;
     esac
 done
