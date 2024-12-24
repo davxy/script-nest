@@ -135,7 +135,7 @@ function current_file() {
 # 
 # First argument should be any extra option to pass to `ff` script (like "f")
 function search_cwd() {
-    opts="-x"
+    opts="-xc"
     if [[ $1 = "-f" ]]; then
         opts="${opts}f"
         shift
@@ -187,7 +187,7 @@ function search_buf() {
     fi
 
     zellij action toggle-fullscreen
-    flq="$(ff -v -q "$query" "$file")"
+    flq="$(ff -vc -q "$query" "$file")"
     zellij action toggle-fullscreen
 
     fl=$(echo "$flq" | grep "result" | awk '{ print $2 }')
@@ -205,7 +205,7 @@ function git_status() {
     zellij action toggle-fullscreen
     file=$(git status --short | \
          awk '{ printf("[%s] %s\n", $1, $2) }' | \
-         fzf --preview 'git diff --color {2}' --preview-window 'up,~4,+{2}+4/2' | \
+         fzf --cycle --preview 'git diff --color {2}' --preview-window 'up,~4,+{2}+4/2' | \
          awk '{ print $2 }')
     zellij action toggle-fullscreen
     if [[ $file == "" ]]; then
@@ -447,7 +447,7 @@ if [ ! -e "$CANARY_FILE" ]; then
 
     # Re-execute the script in a working pane
     zellij action rename-pane "helix"
-    exec zellij run -n "helix-ext" -d $direction -- helix-ext $@ "$userinput"
+    exec zellij run -c -n "helix-ext" -d $direction -- helix-ext $@ "$userinput"
 fi
 
 # TODO: testing if improves reliability
