@@ -5,10 +5,10 @@
 #
 # Tool to delete old files from the folder of choice.
 
+import datetime
 import os
 import sys
 import time
-import datetime
 
 
 def collect_files(directory, days):
@@ -57,10 +57,9 @@ for entry in del_list:
     print("- ({}) {}".format(date, entry[0]))
 
 user_input = input("Confirm [y/N]? ").lower()
-if user_input == 'y':
+if user_input == "y":
     print("Deleting files...")
     for entry in del_list:
         os.remove(entry[0])
 else:
     print("Aborting")
-
