@@ -1,0 +1,242 @@
+#!/usr/bin/env bash
+#
+# Version 0.0.1
+# 
+# Guest XML config:
+# /etc/libvirt/qemu/<GUEST>.xml
+# Once the file is manually modified to apply the changes:
+# > virsh define /etc/libvirt/qemu/<GUEST>.xml
+ 
+NETWORK="default"
+GUEST="arch-vr"
+
+TMPFS_DIR="/mnt/ramdisk"
+OVERLAY="${TMPFS_DIR}/overlay.qcow2"
+
+do_stop_network=0
+do_stop_guest=0
+do_wipe=0
+do_overlay=0
+
+help() {
+  echo "Usage: vm-run [options]"
+  echo " -o|--overlay : use ramfs overlay for write operations"
+  echo " -w|--wipe : remove changes after execution (imply overlay)"
+  exit $1
+}
+
+start_network() {
+  if virsh net-list | grep -q "${NETWORK}.*active"; then
+    echo "Network ${NETWORK} is already active."
+    return
+  fi
+
+  echo "Starting network ${NETWORK}..."
+  if ! virsh net-start "${NETWORK}"; then
+    echo "Failed to start network: ${NETWORK}" >&2
+    exit 1
+  fi
+
+  max_retries=10
+  retries=0
+  while ! virsh net-list | grep -q "${NETWORK}.*active"; do
+    if [[ $retries -ge $max_retries ]]; then
+      echo "Network ${NETWORK} did not shut down after $max_retries attempts."
+      exit 1
+    fi
+    echo "Waiting for network ${NETWORK} to start... Attempt $((retries + 1))/$max_retries"
+    sleep 3
+    ((retries++))
+  done
+  do_stop_network=1
+}
+
+stop_network() {
+  if [[ $do_stop_network == 0 ]]; then
+    return
+  fi
+  if ! virsh net-list | grep -q "${NETWORK}.*active"; then
+    return
+  fi
+
+  echo "Stopping network ${NETWORK}..."
+  if ! virsh net-destroy "${NETWORK}"; then
+    echo "Failed to destroy network: ${NETWORK}" >&2
+    return
+  fi
+
+  max_retries=10
+  retries=0
+  while virsh net-list | grep -q "${NETWORK}.*active"; do
+    if [[ $retries -ge $max_retries ]]; then
+      echo "Network ${NETWORK} did not shut down after $max_retries attempts. Proceeding anyway."
+      break
+    fi
+    virsh net-destroy "${NETWORK}"
+    echo "Waiting for network ${NETWORK} to shut down... Attempt $((retries + 1))/$max_retries"
+    sleep 3
+    ((retries++))
+  done
+}
+
+start_guest() {
+  if virsh list | grep -q "${GUEST}.*running"; then
+    echo "Guest ${GUEST} is already running."
+    return
+  fi
+
+  echo "Starting guest ${GUEST}..."
+  if ! virsh start "${GUEST}"; then
+    echo "Failed to start guest: ${GUEST}" >&2
+    exit 1
+  fi
+
+  max_retries=10
+  retries=0
+  while ! virsh list | grep -q "${GUEST}.*running"; do
+    if [[ $retries -ge $max_retries ]]; then
+      echo "Guest ${GUEST} did not started after $max_retries attempts."
+      exit 1
+    fi
+    echo "Waiting for guest ${GUEST} to start... Attempt $((retries + 1))/$max_retries"
+    sleep 3
+    ((retries++))
+  done
+  do_stop_guest=1
+}
+
+stop_guest() {
+  if [[ $do_stop_guest == 0 ]]; then
+    return 0
+  fi
+
+  if ! virsh list | grep -q "${GUEST}.*running"; then
+    return
+  fi
+
+  echo "Stopping guest ${GUEST}..."
+  if ! virsh shutdown "${GUEST}"; then
+    echo "Failed to shutdown guest: ${GUEST}" >&2
+    return
+  fi
+  sleep 3
+
+  max_retries=10
+  retries=0
+  while virsh list | grep -q "${GUEST}.*running"; do
+    if [[ $retries -ge $max_retries ]]; then
+      echo "Guest ${GUEST} did not shut down after $max_retries attempts. Proceeding anyway."
+      break
+    fi
+    virsh shutdown "${GUEST}"
+    echo "Waiting for guest ${GUEST} to shut down... Attempt $((retries + 1))/$max_retries"
+    sleep 3
+    ((retries++))
+  done
+}
+
+prepare_overlay() {
+  # Exit on errors
+  set -e # Exit on errors
+  set -o pipefail # Catch errors in pipes
+
+  # Find the guest base image
+  echo "Finding the base image for VM: ${GUEST}..."
+  BASE_IMAGE=$(virsh domblklist "${GUEST}" --details | awk '$2 == "disk" {print $4}')
+  if [[ -z "${BASE_IMAGE}" ]]; then
+    echo "Error: Unable to locate the base image for VM ${GUEST}." >&2
+    exit 1
+  fi
+  echo "Base image found: ${BASE_IMAGE}"
+
+  # Create a tmpfs directory for the overlay
+  echo "Setting up tmpfs directory..."
+  if ! mountpoint -q "${TMPFS_DIR}"; then
+    sudo mkdir -p "${TMPFS_DIR}"
+    sudo mount -t tmpfs -o size=4G tmpfs "${TMPFS_DIR}" 
+  fi
+
+  # Step 3: Create an overlay in RAM
+  echo "Creating overlay in tmpfs..."
+  sudo qemu-img create -f qcow2 -b "${BASE_IMAGE}" -F qcow2 "${OVERLAY}"
+  echo "Overlay created: ${OVERLAY}"
+
+  # Step 4: Update VM configuration to use the overlay
+  echo "Updating VM configuration to use the overlay..."
+  vm_config=$(virsh dumpxml "${GUEST}")
+  updated_config=$(echo "${vm_config}" | sed "s|<source file='[^']*'|<source file='${OVERLAY}'|")
+  echo "${updated_config}" | virsh define /dev/stdin
+  echo "VM configuration updated to use the overlay."
+
+  # Disable exit on errors
+  set +e
+  set +o pipefail
+}
+
+commit_overlay() {
+  echo "Committing overlay changes into the base image..."
+  sudo qemu-img commit "${OVERLAY}"
+  echo "Changes have been successfully merged into the base image."
+}
+
+delete_overlay() {
+  # Restore original VM configuration
+  echo "Restoring original VM configuration..."
+  echo "${vm_config}" | virsh define /dev/stdin
+  echo "VM configuration restored."
+
+  # Clean up the tmpfs directory
+  echo "Cleaning up..."
+  if [[ $do_wipe == 1 ]]; then
+    echo "Wiping"
+    sudo shred -z --remove=wipesync "${OVERLAY}"
+  fi
+  sudo rm -f "${OVERLAY}"
+  sudo umount "${TMPFS_DIR}"
+  sudo rm -rf "${TMPFS_DIR}"
+  echo "Cleanup complete"
+}
+
+run() {
+  if [[ $do_overlay == 1 ]]; then
+    sudo -v
+    prepare_overlay
+  fi
+
+  start_network
+  start_guest
+  virt-manager -c qemu:///system --show-domain-console arch-vr > /dev/null 2>&1 &
+  vm_manager_pid=$!
+  wait "${vm_manager_pid}"
+  stop_guest
+  stop_network
+
+  if [[ $do_overlay == 1 ]]; then
+    if [[ $do_wipe == 0 ]]; then
+      commit_overlay
+    fi
+    delete_overlay
+  fi
+}
+
+# Parse CLI options
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        -w|--wipe)
+          do_wipe=1
+          do_overlay=1
+          ;;
+        -o|--overlay)
+          do_overlay=1
+          ;;
+        -h|--help)
+          help 0
+          ;;
+        *)
+          echo "Unknown option: $1" >&2;
+          help 1
+    esac
+    shift
+done
+
+run
