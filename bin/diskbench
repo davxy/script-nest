@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 #
 # Disk rw benchmarks
+#
+# Version 0.1.0
 
 source="/dev/zero"
+
+# Exit on error
+set -e
+sudo -v
 
 if [[ $1 == "" ]]; then
   tmp_path="$(pwd)"
@@ -11,26 +17,29 @@ else
   tmp_path="$1"
 fi
 
-# Ask for super pass immediatelly
 device="$(df -P $tmp_path | awk 'NR==2 {print $1}')"
 sudo echo "Banchmarking rw operations for: $device"
 
 tmp_file="$(mktemp -u -p $tmp_path)"
 
-printf "\n> Bench Write (fdatasync)\n"
-dd if=$source of=$tmp_file bs=1M count=1024 conv=fdatasync,notrunc status=progress
-sleep 1
-
-# printf "\n> Bench Write (dsync)\n"
-# dd if=$source of=$tmp_file bs=1M count=1024 oflag=dsync conv=notrunc status=progress
-# sleep 1
-
-printf "\n> Bench Read\n"
+printf "\n> Bench Write (direct)\n"
 sudo sh -c "/usr/bin/echo 3 > /proc/sys/vm/drop_caches"
-dd if=$tmp_file of=/dev/null bs=1M count=1024 status=progress
+dd if=$source of=$tmp_file bs=1M count=1024 oflag=direct conv=notrunc status=progress
 sleep 1
 
-printf "\n> Bench Read (cached)\n"
+# When conv=fdatasync is specified, it forces a flush of not just the raw data
+# but also any associated metadata (such as file size, timestamps, etc.) to the
+# disk after each write operation is complete.
+printf "\n> Bench Write (fdatasync)\n"
+dd if=$source of=$tmp_file bs=1M count=1024 oflag=direct conv=notrunc,fdatasync status=progress
+sleep 1
+
+printf "\n> Bench Read (direct)\n"
+dd if=$tmp_file of=/dev/null bs=1M count=1024 iflag=direct status=progress
+sleep 1
+
+printf "\n> Bench Read (manually drop cache)\n"
+sudo sh -c "/usr/bin/echo 3 > /proc/sys/vm/drop_caches"
 dd if=$tmp_file of=/dev/null bs=1M count=1024 status=progress
 sleep 1
 
