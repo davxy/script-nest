@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.1.0
+# Version: 0.1.1
 #
 # Wrapper for `trash-list` command (part of `trash` package) to:
 # - create fallbacks for missing `*.trashinfo` files
 # - remove orphaned `*.trashinfo` files
 
 TRASH_DIR="$HOME/.local/share/Trash"
+
+echo "Trash @ $TRASH_DIR"
 
 for file in "${TRASH_DIR}"/files/*; do
   filename=$(basename "$file")
