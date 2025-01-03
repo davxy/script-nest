@@ -11,7 +11,7 @@ NETWORK="default"
 GUEST="arch-vr"
 
 TMPFS_DIR="/mnt/ramdisk"
-OVERLAY="${TMPFS_DIR}/overlay.qcow2"
+OVERLAY="${TMPFS_DIR}/${GUEST}-overlay.qcow2"
 
 do_stop_network=0
 do_stop_guest=0
@@ -156,12 +156,12 @@ prepare_overlay() {
     sudo mount -t tmpfs -o size=4G tmpfs "${TMPFS_DIR}" 
   fi
 
-  # Step 3: Create an overlay in RAM
+  # Create an overlay in RAM
   echo "Creating overlay in tmpfs..."
   sudo qemu-img create -f qcow2 -b "${BASE_IMAGE}" -F qcow2 "${OVERLAY}"
   echo "Overlay created: ${OVERLAY}"
 
-  # Step 4: Update VM configuration to use the overlay
+  # Update VM configuration to use the overlay
   echo "Updating VM configuration to use the overlay..."
   vm_config=$(virsh dumpxml "${GUEST}")
   updated_config=$(echo "${vm_config}" | sed "s|<source file='[^']*'|<source file='${OVERLAY}'|")
@@ -192,7 +192,7 @@ delete_overlay() {
     sudo shred -z --remove=wipesync "${OVERLAY}"
   fi
   sudo rm -f "${OVERLAY}"
-  sudo umount "${TMPFS_DIR}"
+  sudo umount -l "${TMPFS_DIR}"
   sudo rm -rf "${TMPFS_DIR}"
   echo "Cleanup complete"
 }
