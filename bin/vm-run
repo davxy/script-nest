@@ -35,7 +35,7 @@ start_network() {
     return 0
   fi
 
-  echo "Starting network ${NETWORK}..."
+  echo "Starting network"
   if ! virsh net-start "${NETWORK}"; then
     echo "Failed to start network: ${NETWORK}" >&2
     return 1
@@ -45,10 +45,10 @@ start_network() {
   retries=0
   while ! virsh net-list | grep -q "${NETWORK}.*active"; do
     if [[ $retries -ge $max_retries ]]; then
-      echo "Network ${NETWORK} did not shut down after $max_retries attempts."
+      echo "Network did not shut down after $max_retries attempts."
       return 1
     fi
-    echo "Waiting for network ${NETWORK} to start... Attempt $((retries + 1))/$max_retries"
+    echo "Waiting for network to start... Attempt $((retries + 1))/$max_retries"
     sleep 3
     ((retries++))
   done
@@ -64,7 +64,7 @@ stop_network() {
     return
   fi
 
-  echo "Stopping network ${NETWORK}..."
+  echo "Stopping network"
   if ! virsh net-destroy "${NETWORK}"; then
     echo "Failed to destroy network: ${NETWORK}" >&2
     return
@@ -74,11 +74,11 @@ stop_network() {
   retries=0
   while virsh net-list | grep -q "${NETWORK}.*active"; do
     if [[ $retries -ge $max_retries ]]; then
-      echo "Network ${NETWORK} did not shut down after $max_retries attempts. Proceeding anyway."
+      echo "Network did not shut down after $max_retries attempts. Proceeding anyway."
       break
     fi
     virsh net-destroy "${NETWORK}"
-    echo "Waiting for network ${NETWORK} to shut down... Attempt $((retries + 1))/$max_retries"
+    echo "Waiting for network to shut down. Attempt $((retries + 1))/$max_retries"
     sleep 3
     ((retries++))
   done
@@ -86,11 +86,11 @@ stop_network() {
 
 start_guest() {
   if virsh list | grep -q "${GUEST}.*running"; then
-    echo "Guest ${GUEST} is already running."
+    echo "Guest is already running."
     return 0
   fi
 
-  echo "Starting guest ${GUEST}..."
+  echo "Starting guest"
   if ! virsh start "${GUEST}"; then
     echo "Failed to start guest: ${GUEST}" >&2
     return 1
@@ -103,7 +103,7 @@ start_guest() {
       echo "Guest ${GUEST} did not started after $max_retries attempts."
       return 1
     fi
-    echo "Waiting for guest ${GUEST} to start... Attempt $((retries + 1))/$max_retries"
+    echo "Waiting for guest to start. Attempt $((retries + 1))/$max_retries"
     sleep 3
     ((retries++))
   done
@@ -120,7 +120,7 @@ stop_guest() {
     return
   fi
 
-  echo "Stopping guest ${GUEST}..."
+  echo "Stopping guest"
   if ! virsh shutdown "${GUEST}"; then
     echo "Failed to shutdown guest: ${GUEST}" >&2
     return
@@ -131,11 +131,11 @@ stop_guest() {
   retries=0
   while virsh list | grep -q "${GUEST}.*running"; do
     if [[ $retries -ge $max_retries ]]; then
-      echo "Guest ${GUEST} did not shut down after $max_retries attempts. Proceeding anyway."
+      echo "Guest did not shut down after $max_retries attempts. Proceeding anyway."
       break
     fi
     virsh shutdown "${GUEST}"
-    echo "Waiting for guest ${GUEST} to shut down... Attempt $((retries + 1))/$max_retries"
+    echo "Waiting for guest to shut down. Attempt $((retries + 1))/$max_retries"
     sleep 3
     ((retries++))
   done
@@ -147,35 +147,35 @@ prepare_overlay() {
   set -o pipefail # Catch errors in pipes
 
   # Find the guest base image
-  echo "Finding the base image for VM: ${GUEST}..."
+  echo "Finding the base image for guest"
   BASE_IMAGE=$(virsh domblklist "${GUEST}" --details | awk '$2 == "disk" {print $4}')
   if [[ -z "${BASE_IMAGE}" ]]; then
-    echo "Error: base image for VM ${GUEST} not defined." >&2
+    echo "Error: base image not defined" >&2
     exit 1
   fi
   if [[ ! -f "${BASE_IMAGE}" ]]; then
-    echo "Error: base image for VM ${GUEST} not found." >&2
+    echo "Error: base image \"${BASE_IMAGE}\" not found" >&2
     exit 1
   fi
 
   # Create a tmpfs directory for the overlay
-  echo "Setting up tmpfs directory..."
+  echo "Setting up tmpfs directory"
   if ! mountpoint -q "${TMPFS_DIR}"; then
     sudo mkdir -p "${TMPFS_DIR}"
     sudo mount -t tmpfs -o size=${OVERLAY_MAX_SIZE} tmpfs "${TMPFS_DIR}" 
   fi
 
   # Create an overlay in RAM
-  echo "Creating overlay in tmpfs..."
+  echo "Creating overlay in tmpfs"
   sudo qemu-img create -f qcow2 -b "${BASE_IMAGE}" -F qcow2 "${OVERLAY}"
   echo "Overlay created: ${OVERLAY}"
 
   # Update VM configuration to use the overlay
-  echo "Updating VM configuration to use the overlay..."
+  echo "Updating guest configuration to use the overlay"
   vm_config=$(virsh dumpxml "${GUEST}")
   updated_config=$(echo "${vm_config}" | sed "s|<source file='[^']*'|<source file='${OVERLAY}'|")
   echo "${updated_config}" | virsh define /dev/stdin
-  echo "VM configuration updated to use the overlay."
+  echo "Guest configuration updated to use the overlay."
 
   # Disable exit on errors
   set +e
@@ -184,21 +184,19 @@ prepare_overlay() {
 
 # Restore original VM configuration
 restore_original() {
-  echo "Restoring original VM configuration..."
+  echo "Restoring guest original configuration"
   echo "${vm_config}" | virsh define /dev/stdin
-  echo "VM configuration restored."
 }
 
 # Commit overlay
 commit_overlay() {
-  echo "Committing overlay changes into the base image..."
+  echo "Committing overlay changes into the guest base image"
   sudo qemu-img commit "${OVERLAY}"
-  echo "Changes have been successfully merged into the base image."
 }
 
 # Clean up the tmpfs directory
 delete_overlay() {
-  echo "Cleaning up..."
+  echo "Cleaning up overlay"
   if [[ $do_wipe == 1 ]]; then
     echo "Wiping"
     sudo shred -z --remove=wipesync "${OVERLAY}"
@@ -206,7 +204,6 @@ delete_overlay() {
   sudo rm -f "${OVERLAY}"
   sudo umount -l "${TMPFS_DIR}"
   sudo rm -rf "${TMPFS_DIR}"
-  echo "Cleanup complete"
 }
 
 run() {
