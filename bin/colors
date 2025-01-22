@@ -8,6 +8,5 @@ print_color() {
 }
 
 for i in {0..255}; do
-    # Print the color code an a sample text
-    print_color "38;5;${i}" "$i: Sample Text"
+    print_color "38;5;${i}" "$i: ■ ● ★"
 done
