@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+#
+# Send notification using `notify-send` on low battery
+
+THRESHOLD=20
+SHUTDOWN_THRESHOLD=5
+
+BATTERY_LEVEL=$(cat /sys/class/power_supply/BAT0/capacity)
+STATUS=$(cat /sys/class/power_supply/BAT0/status)
+
+if [ "$BATTERY_LEVEL" -le "$THRESHOLD" ] && [ "$STATUS" != "Charging" ]; then
+    notify-send "Low Battery" "Battery level is at ${BATTERY_LEVEL}%. Please plug in your charger." -u critical
+    if [ "$BATTERY_LEVEL" -le "$SHUTDOWN_THRESHOLD" ]; then
+        notify-send -u critical "Shutdown in 1 minute"
+        # TODO
+    fi
+fi
+
