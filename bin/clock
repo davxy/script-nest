@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+date=$(date +"%A %d %B - %R")
+notify-send -t 10000 -e -a "" "$date"
