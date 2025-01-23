@@ -1,0 +1,68 @@
+#!/usr/bin/env python
+
+import os
+import sys
+import tarfile
+import subprocess
+import shutil
+
+def compress_directory(input_path, output_file):
+    with tarfile.open(output_file, "w:gz") as tar:
+        if os.path.isdir(input_path):
+            tar.add(input_path, arcname=os.path.basename(input_path))
+        else:
+            raise ValueError("Compression is only supported for directories")
+
+def extract_tar_gz(input_file):
+    with tarfile.open(input_file, "r:gz") as tar:
+        tar.extractall()
+
+def encrypt_file(input_file):
+    encrypted_file = f"{input_file}.gpg"
+    command = [
+        "gpg", "--symmetric", "--cipher-algo", "AES256", "--output", encrypted_file, input_file
+    ]
+    subprocess.run(command, check=True)
+    os.remove(input_file)
+    return encrypted_file
+
+def decrypt_file(encrypted_file):
+    if not encrypted_file.endswith(".gpg"):
+        raise ValueError("Encrypted file must have .gpg extension")
+    output_file = encrypted_file[:-4]
+    command = [
+        "gpg", "--decrypt", "--output", output_file, encrypted_file
+    ]
+    subprocess.run(command, check=True)
+    os.remove(encrypted_file)
+    return output_file
+
+def main():
+    if len(sys.argv) < 3:
+        print("Usage: ./crypt.py e <file|dir> or ./crypt.py d <encrypted_file>")
+        sys.exit(1)
+
+    action = sys.argv[1]
+    target = sys.argv[2]
+
+    if action == "e":
+        if os.path.isdir(target):
+            target = target.rstrip('/')
+            compressed_file = f"{os.path.basename(target)}.tar.gz"
+            compress_directory(target, compressed_file)
+            encrypt_file(compressed_file)
+            shutil.rmtree(target)
+        elif os.path.isfile(target):
+            encrypt_file(target)
+        else:
+            print(f"Target not found: {target}")
+    elif action == "d":
+        decrypted_file = decrypt_file(target)
+        if decrypted_file.endswith(".tar.gz"):
+            extract_tar_gz(decrypted_file)
+            os.remove(decrypted_file)  # Remove the compressed file after extraction
+    else:
+        print("Invalid action. Use 'enc' for encryption or 'dec' for decryption.")
+
+if __name__ == "__main__":
+    main()
