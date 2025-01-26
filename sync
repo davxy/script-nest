@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 #
-# Tool to synchronize versioned and user scripts in the ~/bin folder.
-#
-# Depends on:
-# - rsync
+# Tool to synchronize scripts from/to the ~/bin folder.
 
 USER_BIN="$HOME/bin"
 NEST_BIN="$PWD/bin"
