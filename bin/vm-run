@@ -3,7 +3,7 @@
 # Run libvirt qemu VM with optionally ephemeral overlay.
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.0.2
+# Version: 0.0.3
 #
 # Guest XML config:
 # /etc/libvirt/qemu/<GUEST>.xml
@@ -236,9 +236,9 @@ run() {
   virt-viewer -a --domain-name ${GUEST} > /dev/null 2>&1 &
   local viewer_pid=$!
 
-  echo "Waiting for virt-manager (${viewer_pid})"
+  echo "Waiting for virt-viewer (${viewer_pid})"
   wait "${viewer_pid}"
-  echo "virt-manager manager stopped"
+  echo "virt-viewer manager stopped"
 
   stop_guest
   stop_network
@@ -270,5 +270,15 @@ while [[ "$#" -gt 0 ]]; do
     esac
     shift
 done
+
+# Check dependencies
+if ! command -v virsh &> /dev/null; then
+    echo "'virsh' is not available."
+    exit 1
+fi
+if ! command -v virt-viewer &> /dev/null; then
+    echo "'virt-viewer' is not available."
+    exit 1
+fi
 
 run

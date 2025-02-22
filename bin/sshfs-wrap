@@ -39,7 +39,8 @@ mount()
         -o follow_symlinks \
         -o transform_symlinks \
         -o PreferredAuthentications=publickey \
-        -o Ciphers=aes128-ctr
+        -o Ciphers=aes128-ctr \
+        -o Compression=no
     if [ $? != 0 ]; then
         echo "Mount error"
         mountpoint $DIR

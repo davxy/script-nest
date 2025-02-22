@@ -11,9 +11,9 @@
 # - wl-copy (optional): to copy to clipboard a result via <C-y>.
 #                       Can be replaced by any clipboard manager.
 #
-# Assumptions for live editor open:
-# - When using the `EDITOR` env variable set to default editor.
-# - The editor of choice should be able to open a file like: `$EDITOR finapath:line`
+# Text editor assumptions:
+# - `EDITOR` variable set to default editor.
+# - Should be able to open a file like: `$EDITOR finapath:line`
 
 # Options
 edit=0
