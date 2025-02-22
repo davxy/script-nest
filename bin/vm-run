@@ -123,6 +123,7 @@ stop_guest() {
   echo "Stopping guest"
   if ! virsh shutdown "${GUEST}"; then
     echo "Failed to shutdown guest: ${GUEST}" >&2
+    virsh destroy "${GUEST}"
     return
   fi
   sleep 3
@@ -131,7 +132,8 @@ stop_guest() {
   retries=0
   while virsh list | grep -q "${GUEST}.*running"; do
     if [[ $retries -ge $max_retries ]]; then
-      echo "Guest did not shut down after $max_retries attempts. Proceeding anyway."
+      echo "Guest did not shutdown after $max_retries attempts. Stopping."
+      virsh destroy "${GUEST}"
       break
     fi
     virsh shutdown "${GUEST}"
@@ -169,6 +171,11 @@ prepare_overlay() {
   echo "Creating overlay in tmpfs"
   sudo qemu-img create -f qcow2 -b "${BASE_IMAGE}" -F qcow2 "${OVERLAY}"
   echo "Overlay created: ${OVERLAY}"
+
+  if [[ $do_wipe == 1 ]]; then
+    echo "Disabling swap TODO"
+    # sudo swapoff -a
+  fi
 
   # Update VM configuration to use the overlay
   echo "Updating guest configuration to use the overlay"
