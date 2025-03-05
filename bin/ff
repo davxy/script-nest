@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.1.7
+# Version: 0.1.9
 #
 # Fast tool to search into files using fuzzy finder
 #
 # Depends on
-# - ripgrep
 # - fzf
+# - ripgrep
 # - wl-copy (optional): to copy to clipboard a result via <C-y>.
 #                       Can be replaced by any clipboard manager.
 #
@@ -44,6 +44,19 @@ function help() {
     exit
 }
 
+
+function get_column() {
+    filename="$1"
+    line=$2
+    query="$3"
+    # Get column of first word in query
+    word=$(echo $query | cut -d' ' -f1)   
+    line_content=$(sed -n "${line}p" "$file")
+    column=$(echo "$line_content" | grep -b -o "$word" | head -1 | cut -d':' -f1)
+    column=$((column + 1))
+    echo $column
+}
+
 function search_folder() {
     preview_cmd="bat --style=full --color=always --highlight-line {2} {1}"
     preview_win="up,~4,+{2}+4/2,$preview_ratio"
@@ -74,18 +87,19 @@ function search_folder() {
         query=$(echo "$out" | cut -d$'\n' -f1)
         # Remove cruft leaving something like: 'file:line'
         results=$(echo "$out" | cut -d$'\n' -f2- | sed -E 's/([^:]*):([0-9]*):.*/\1:\2/')
+        file=$(echo $results | cut -d':' -f1)
+        line=$(echo $results | cut -d':' -f2)
+        column=$(get_column "$file" $line "$query")
+        flc="${file}:${line}:${column}"
 
         # Check if we want to edit the results
         if [[ $edit == 1 && $results != "" ]]; then
-            $EDITOR $results
+            $EDITOR $flc
         else
+            echo "$flc"
             if [[ $verbose == 1 ]]; then
                 echo "query: $query"
             fi
-            IFS=$'\n' mapfile -t selected_matches <<< "$results"
-            for element in "${selected_matches[@]}"; do
-                echo $element
-            done
             break
         fi
     done
@@ -114,7 +128,7 @@ function search_file() {
     preview_cmd="bat --style=full --color=always --highlight-line {1} $file"
     preview_win="up,~4,+{1}+4/2,$preview_ratio"
     while true; do
-        result=$(bat --plain --color always $file | \
+        result=$(bat --plain --color always "$file" | \
             nl -ba -w1 -s": " | \
             fzf \
                 --ansi \
@@ -129,26 +143,24 @@ function search_file() {
                 --query="$query" \
                 --preview "$preview_cmd" \
                 --preview-window "$preview_win" | \
-            awk '{ print $1 }' |
-            sed 's/:$//')
+            cut -d':' -f1)
 
         if [[ $result == "" ]]; then
             break
         fi
 
-        # Extract new query
+        # Extract query
         query=$(echo "$result" | cut -d$'\n' -f1)
         line=$(echo "$result" | cut -d$'\n' -f2)
+        column=$(get_column "$file" $line "$query")
 
-        fl="${file}:${line}"
+        flc="${file}:${line}:${column}"
         if [[ $edit == 1 ]]; then
-            $EDITOR $fl
+            $EDITOR $flc
         else
+            echo "$flc"
             if [[ $verbose == 1 ]]; then
-                echo "result: $fl"
                 echo "query: $query"
-            else
-                echo $fl
             fi
             break
         fi
