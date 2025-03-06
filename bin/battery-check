@@ -5,14 +5,28 @@
 THRESHOLD=20
 SHUTDOWN_THRESHOLD=5
 
-BATTERY_LEVEL=$(cat /sys/class/power_supply/BAT0/capacity)
-STATUS=$(cat /sys/class/power_supply/BAT0/status)
+BATTERY_PATH="/sys/class/power_supply/BAT0"
+if [ ! -d "$BATTERY_PATH" ]; then
+    echo "Battery folder not found at $BATTERY_PATH"
+    exit 0
+fi
+
+BATTERY_LEVEL=$(cat "$BATTERY_PATH/capacity")
+if [ $? -ne 0 ]; then
+    echo "Error: Failed to read battery capacity"
+    exit 1
+fi
+STATUS=$(cat "$BATTERY_PATH/status")
+if [ $? -ne 0 ]; then
+    echo "Error: Failed to read battery status"
+    exit 1
+fi
 
 if [ "$BATTERY_LEVEL" -le "$THRESHOLD" ] && [ "$STATUS" != "Charging" ]; then
-    notify-send "Low Battery" "Battery level is at ${BATTERY_LEVEL}%. Please plug in your charger." -u critical
+    notify-send -u critical "Low Battery" "Battery level is at ${BATTERY_LEVEL}%. Please plug in your charger."
     if [ "$BATTERY_LEVEL" -le "$SHUTDOWN_THRESHOLD" ]; then
         notify-send -u critical "Shutdown in 1 minute"
-        # TODO
+        shutodown -h +1
     fi
 fi
 
