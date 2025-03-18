@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.1.9
+# Version: 0.1.10
 #
 # Fast tool to search into files using fuzzy finder
 #
@@ -62,7 +62,7 @@ function search_folder() {
     preview_win="up,~4,+{2}+4/2,$preview_ratio"
     while true; do
         # Search using rg and fzf with preview
-        out=$(rg . --line-number --no-heading --glob '!.git' * | \
+        out=$(rg . --line-number --no-heading --glob '!.git' | \
               fzf -m \
                 ${ignore_case} \
                 ${cycle} \
@@ -90,6 +90,8 @@ function search_folder() {
         file=$(echo $results | cut -d':' -f1)
         line=$(echo $results | cut -d':' -f2)
         column=$(get_column "$file" $line "$query")
+
+        file=$(realpath "$file")
         flc="${file}:${line}:${column}"
 
         # Check if we want to edit the results
@@ -125,7 +127,7 @@ function search_file() {
         file=$tmpfile
     fi
 
-    preview_cmd="bat --style=full --color=always --highlight-line {1} $file"
+    preview_cmd="bat --style=full --paging=never --color=always --highlight-line {1} $file"
     preview_win="up,~4,+{1}+4/2,$preview_ratio"
     while true; do
         result=$(bat --plain --color always "$file" | \
@@ -154,6 +156,7 @@ function search_file() {
         line=$(echo "$result" | cut -d$'\n' -f2)
         column=$(get_column "$file" $line "$query")
 
+        file=$(realpath "$file")
         flc="${file}:${line}:${column}"
         if [[ $edit == 1 ]]; then
             $EDITOR $flc
