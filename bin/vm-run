@@ -3,7 +3,7 @@
 # Run libvirt qemu VM with optionally ephemeral overlay.
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.0.3
+# Version: 0.0.4
 #
 # Guest XML config:
 # /etc/libvirt/qemu/<GUEST>.xml
@@ -213,6 +213,14 @@ delete_overlay() {
   sudo rm -rf "${TMPFS_DIR}"
 }
 
+# Define a cleanup function
+cleanup() {
+    echo "Cleaning up..."
+    # Kill the background job
+    echo "Kill $sudo_background_pid"
+    kill "$sudo_background_pid"
+}
+
 run() {
   start_network
   if [[ $? == 1 ]]; then
@@ -221,6 +229,12 @@ run() {
 
   if [[ $do_overlay == 1 ]]; then
     sudo -v
+    # Refresh sudo cretentials every 60 seconds
+    (while true; do sudo -v; sleep 60; done) &
+    # Get the PID of the background job
+    sudo_background_pid=$!
+    # Set the trap to call cleanup on EXIT, INT, or TERM
+    trap cleanup EXIT INT TERM
     prepare_overlay
   fi
   start_guest
