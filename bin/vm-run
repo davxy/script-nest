@@ -3,7 +3,7 @@
 # Run libvirt qemu VM with optionally ephemeral overlay.
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.0.4
+# Version: 0.0.5
 #
 # Guest XML config:
 # /etc/libvirt/qemu/<GUEST>.xml
@@ -197,8 +197,9 @@ restore_original() {
 
 # Commit overlay
 commit_overlay() {
-  echo "Committing overlay changes into the guest base image"
-  sudo qemu-img commit "${OVERLAY}"
+  local overlay_size=$(du -h $OVERLAY | awk '{ print $1 }')
+  echo "Committing overlay changes into the guest base image ($overlay_size)"
+  sudo qemu-img commit -p "${OVERLAY}"
 }
 
 # Clean up the tmpfs directory
