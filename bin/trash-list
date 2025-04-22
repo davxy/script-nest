@@ -1,38 +1,50 @@
 #!/usr/bin/env bash
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.1.1
+# Version: 0.1.2
 #
 # Wrapper for `trash-list` command (part of `trash` package) to:
 # - create fallbacks for missing `*.trashinfo` files
 # - remove orphaned `*.trashinfo` files
+ 
+shopt -s nullglob
 
-TRASH_DIR="$HOME/.local/share/Trash"
+function inspect() {
+  local trash_dir=$1
+  echo "-------------------------------------------"
+  echo "Trash @ $trash_dir"
 
-echo "Trash @ $TRASH_DIR"
-
-for file in "${TRASH_DIR}"/files/*; do
-  filename=$(basename "$file")
-  info="${TRASH_DIR}/info/${filename}.trashinfo"
-  if [ ! -e "$info" ]; then
-    echo "Missing \"$filename\" metadata, fallback to default"
-    modification_date=$(stat -c "%y" "$file")
-    modification_date=$(date -d "$modification_date" "+%Y-%m-%dT%H:%M:%S")
-    cat > "$info"  <<EOF
+  for file in ${trash_dir}/files/*; do
+    filename=$(basename "$file")
+    info="${trash_dir}/info/${filename}.trashinfo"
+    if [ ! -e "$info" ]; then
+      echo "Missing \"$filename\" metadata, fallback to default"
+      modification_date=$(stat -c "%y" "$file")
+      modification_date=$(date -d "$modification_date" "+%Y-%m-%dT%H:%M:%S")
+      cat > "$info"  <<EOF
 [Trash Info]
-Path=${HOME}/tmp/trash-orphans/${filename}
+Path=/tmp/trash-orphans/${filename}
 DeletionDate=${modification_date}
 EOF
   fi
 done
 
-for info in "${TRASH_DIR}"/info/*; do
-  filename=$(basename "$info")
-  file="${TRASH_DIR}/files/${filename%.*}"
-  if [ ! -e "$file" ]; then
-    echo "Cleaning orphan metadata for \"${filename%.*}\""
-    rm $info
-  fi
+  for info in "${trash_dir}"/info/*; do
+    filename=$(basename "$info")
+    file="${trash_dir}/files/${filename%.*}"
+    if [ ! -e "$file" ]; then
+      echo "Cleaning orphan metadata for \"${filename%.*}\""
+      rm $info
+    fi
+  done
+
+  /usr/bin/trash-list --trash-dir "$trash_dir"
+}
+
+dirs=$(/usr/bin/trash-list --trash-dirs)
+
+for dir in $dirs; do
+  inspect "$dir" "$@"
 done
 
-exec /usr/bin/trash-list $@
+
