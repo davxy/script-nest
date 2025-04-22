@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.1.10
+# Version: 0.1.11
 #
 # Fast tool to search into files using fuzzy finder
 #
@@ -13,7 +13,7 @@
 #
 # Text editor assumptions:
 # - `EDITOR` variable set to default editor.
-# - Should be able to open a file like: `$EDITOR finapath:line`
+# - Should be able to open a file like: `$EDITOR file:line`
 
 # Options
 edit=0
@@ -112,19 +112,18 @@ function search_file() {
 
     tmpfile=""
     if [ ! -f $file ]; then
-        tmpfile=$(mktemp)
-        touch $tmpfile
-        # Dump at most 10M ()
-        dd if=$file of="$tmpfile" iflag=fullblock bs=1M count=101 2>/dev/null
-        file_size_bytes=$(stat -c %s $tmpfile)
+        tmpfile=$(mktemp ff.XXXXXXXX)
+        # Dump at most 100M
+        dd if=$file of="$tmpfile" iflag=fullblock bs=1M count=100 2>/dev/null
+        file=$tmpfile
+        file_size_bytes=$(stat -c %s $file)
         file_size_mib=$(echo "scale=2; $file_size_bytes / (1024 * 1024)" | bc)
         # Compare file size in MiB with 100
         if (( $(echo "$file_size_mib > 100" | bc -l) )); then
-            truncate -s 100M $tmpfile
-            mv "$tmpfile" "${tmpfile}-truncated"
-            tmpfile="${tmpfile}-truncated"
+            truncate -s 100M $file
+            mv "$file" "${file}-truncated"
+            file="${file}-truncated"
         fi
-        file=$tmpfile
     fi
 
     preview_cmd="bat --style=full --paging=never --color=always --highlight-line {1} $file"
