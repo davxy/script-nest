@@ -1,55 +1,191 @@
 #!/usr/bin/env bash
 #
-# Block devide RW benchmarks
+# Block device RW benchmarks
 #
-# Version 0.1.1
+# Version 0.2.0
 
 source="/dev/zero"
 
-# Exit on error
 set -e
-sudo -v
 
-if [[ $1 == "" ]]; then
-  tmp_path="$(pwd)"
-  echo "No path supplied. Benching current folder block device"
-else
-  tmp_path="$1"
-fi
+show_help() {
+  cat << EOF
+Usage: $(basename "$0") [PATH]
 
-device="$(df -P $tmp_path | awk 'NR==2 {print $1}')"
-sudo echo "Banchmarking rw operations for: $device"
+Block device read/write benchmark tool.
 
-tmp_file="$(mktemp -u -p $tmp_path)"
+Arguments:
+  PATH    Directory path to benchmark (default: current directory)
 
-run_bench() {
-  bs=$1
-  echo "=========================================================="
-  echo -e "> Testing with block size: $bs\n"
+Options:
+  -h, --help    Show this help message
 
-  printf "\n> Bench Write (direct)\n"
-  sudo dd if=$source of=$tmp_file bs=$bs count=1024 oflag=direct conv=notrunc status=progress
-  sleep 1
-
-  # When conv=fdatasync is specified, it forces a flush of not just the raw data
-  # but also any associated metadata (such as file size, timestamps, etc.) to the
-  # disk after each write operation is complete.
-  printf "\n> Bench Write (fdatasync)\n"
-  sudo dd if=$source of=$tmp_file bs=$bs count=1024 oflag=direct conv=notrunc,fdatasync status=progress
-  sleep 1
-
-  printf "\n> Bench Read (direct)\n"
-  sudo dd if=$tmp_file of=/dev/null bs=$bs count=1024 iflag=direct status=progress
-  sleep 1
-
-  printf "\n> Bench Read (manually drop cache)\n"
-  sudo sh -c "/usr/bin/echo 3 > /proc/sys/vm/drop_caches"
-  sudo dd if=$tmp_file of=/dev/null bs=$bs count=1024 status=progress
-  sleep 1
-
-  sudo rm $tmp_file
+Examples:
+  $(basename "$0")           # Benchmark current directory
+  $(basename "$0") /tmp      # Benchmark /tmp directory
+EOF
 }
 
-for bs in 4K 128K 1M 10M; do
-  run_bench $bs
+# Handle help option
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+  show_help
+  exit 0
+fi
+
+# Validate sudo access early
+if ! sudo -n true 2>/dev/null; then
+  echo "This script requires sudo access. Please authenticate:"
+  sudo -v
+fi
+
+# Determine target path
+if [[ $1 == "" ]]; then
+  tmp_path="$(pwd)"
+  echo "No path supplied. Benchmarking current directory's block device"
+else
+  tmp_path="$1"
+  if [[ ! -d "$tmp_path" ]]; then
+    echo "Error: Directory '$tmp_path' does not exist" >&2
+    exit 1
+  fi
+  if [[ ! -w "$tmp_path" ]]; then
+    echo "Error: Directory '$tmp_path' is not writable" >&2
+    exit 1
+  fi
+fi
+
+# Get device information
+device="$(df -P "$tmp_path" | awk 'NR==2 {print $1}')"
+if [[ -z "$device" ]]; then
+  echo "Error: Could not determine block device for path '$tmp_path'" >&2
+  exit 1
+fi
+
+echo "Benchmarking RW operations for: $device"
+echo "Target path: $tmp_path"
+echo
+
+# Create temporary file
+tmp_file="$(mktemp -p "$tmp_path" rwbench.XXXXXX)"
+
+# Cleanup function
+cleanup() {
+  if [[ -f "$tmp_file" ]]; then
+    sudo rm -f "$tmp_file" 2>/dev/null || true
+  fi
+}
+
+# Set trap for cleanup on exit
+trap cleanup EXIT INT TERM
+
+# Function to format speed in human-readable units
+format_speed() {
+  local bytes_per_sec=$1
+  
+  if (( $(echo "$bytes_per_sec >= 1073741824" | bc -l) )); then
+    echo "$(echo "scale=2; $bytes_per_sec / 1073741824" | bc -l) GB/s"
+  elif (( $(echo "$bytes_per_sec >= 1048576" | bc -l) )); then
+    echo "$(echo "scale=2; $bytes_per_sec / 1048576" | bc -l) MB/s"
+  elif (( $(echo "$bytes_per_sec >= 1024" | bc -l) )); then
+    echo "$(echo "scale=2; $bytes_per_sec / 1024" | bc -l) KB/s"
+  else
+    echo "$(echo "scale=2; $bytes_per_sec" | bc -l) B/s"
+  fi
+}
+
+# Function to convert block size to bytes
+bs_to_bytes() {
+  local bs=$1
+  case $bs in
+    *K) echo $(( ${bs%K} * 1024 )) ;;
+    *M) echo $(( ${bs%M} * 1024 * 1024 )) ;;
+    *G) echo $(( ${bs%G} * 1024 * 1024 * 1024 )) ;;
+    *) echo "$bs" ;;
+  esac
+}
+
+# Function to run a command with timing and speed calculation
+run_timed_command() {
+  local bytes_transferred=$1
+  shift
+  local start_time end_time duration speed
+  
+  start_time=$(date +%s.%N)
+  if ! "$@"; then
+    return 1
+  fi
+  end_time=$(date +%s.%N)
+  duration=$(echo "$end_time - $start_time" | bc -l 2>/dev/null || echo "N/A")
+  
+  if [[ "$duration" != "N/A" && $(echo "$duration > 0" | bc -l) -eq 1 ]]; then
+    speed=$(echo "$bytes_transferred / $duration" | bc -l)
+    echo "Duration: ${duration}s, Speed: $(format_speed "$speed")"
+  else
+    echo "Duration: ${duration}s"
+  fi
+}
+
+run_bench() {
+  local bs=$1
+  local bs_bytes=$(bs_to_bytes "$bs")
+  local bytes_transferred=$((bs_bytes * 1024))  # 1024 blocks
+  
+  echo "=========================================================="
+  echo "Testing with block size: $bs"
+  echo "=========================================================="
+
+  echo
+  echo "→ Write benchmark (direct I/O)"
+  if ! run_timed_command "$bytes_transferred" sudo dd if="$source" of="$tmp_file" bs="$bs" count=1024 oflag=direct conv=notrunc status=progress 2>/dev/null; then
+    echo "Error: Write benchmark failed" >&2
+    return 1
+  fi
+  sleep 1
+
+  echo
+  echo "→ Write benchmark (fdatasync)"
+  echo "  Note: Forces flush of data and metadata to disk"
+  if ! run_timed_command "$bytes_transferred" sudo dd if="$source" of="$tmp_file" bs="$bs" count=1024 oflag=direct conv=notrunc,fdatasync status=progress 2>/dev/null; then
+    echo "Error: Write benchmark with fdatasync failed" >&2
+    return 1
+  fi
+  sleep 1
+
+  echo
+  echo "→ Read benchmark (direct I/O)"
+  if ! run_timed_command "$bytes_transferred" sudo dd if="$tmp_file" of=/dev/null bs="$bs" count=1024 iflag=direct status=progress 2>/dev/null; then
+    echo "Error: Read benchmark failed" >&2
+    return 1
+  fi
+  sleep 1
+
+  echo
+  echo "→ Read benchmark (cache cleared)"
+  echo "  Note: Manually dropping page cache before read"
+  if ! sudo sh -c "echo 3 > /proc/sys/vm/drop_caches" 2>/dev/null; then
+    echo "Warning: Could not drop caches" >&2
+  fi
+  if ! run_timed_command "$bytes_transferred" sudo dd if="$tmp_file" of=/dev/null bs="$bs" count=1024 status=progress 2>/dev/null; then
+    echo "Error: Read benchmark with cleared cache failed" >&2
+    return 1
+  fi
+  sleep 1
+  
+  echo
+}
+
+# Run benchmarks with different block sizes
+echo "Starting benchmark suite..."
+echo "Block sizes to test: 4K, 128K, 1M"
+echo
+
+for bs in 4K 128K 1M; do
+  if ! run_bench "$bs"; then
+    echo "Error: Benchmark failed for block size $bs" >&2
+    exit 1
+  fi
 done
+
+echo "=========================================================="
+echo "Benchmark suite completed successfully!"
+echo "=========================================================="
