@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+#
+# Archive cloud
+
+set -euo pipefail
+
+DEFAULT_ARCHIVE_DIR="/mnt/data/davxy/archive"
+ARCHIVE_DIR="${ARCHIVE_DIR:-$DEFAULT_ARCHIVE_DIR}"
+
+# Check if archive directory exists
+if [[ ! -d "$ARCHIVE_DIR" ]]; then
+    echo "Error: Archive directory $ARCHIVE_DIR does not exist"
+    exit 1
+fi
+
+# Make directory writable
+chmod -R u+w "$ARCHIVE_DIR"
+
+# Function to sync with error handling
+sync_cloud() {
+    local service="$1"
+    local target="$ARCHIVE_DIR/cloud/$1"
+    
+    echo "--- SYNCING $service ---"
+    if rclone sync --progress "$service:" "$target"; then
+        echo "✓ $service sync completed successfully"
+    else
+        echo "✗ $service sync failed"
+        return 1
+    fi
+}
+
+# Sync each cloud service
+sync_cloud "pcloud"
+sync_cloud "mega"
+sync_cloud "dropbox"
+
+# Make directory read-only again
+chmod -R a-w "$ARCHIVE_DIR"
+
+echo "All cloud archives synced successfully!"
