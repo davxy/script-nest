@@ -3,297 +3,464 @@
 # Run libvirt qemu VM with optionally ephemeral overlay.
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.0.5
+# Version: 0.1.0
 #
 # Guest XML config:
 # /etc/libvirt/qemu/<GUEST>.xml
 # Once the file is manually modified to apply the changes:
 # > virsh define /etc/libvirt/qemu/<GUEST>.xml
- 
-NETWORK="default"
-GUEST="arch-vr"
-OVERLAY_MAX_SIZE=8G
 
-TMPFS_DIR="/mnt/ramdisk"
-OVERLAY="${TMPFS_DIR}/${GUEST}-overlay.qcow2"
+set -euo pipefail
 
+# Configuration
+readonly NETWORK="default"
+readonly GUEST="arch-vr"
+readonly OVERLAY_MAX_SIZE="8G"
+readonly TMPFS_DIR="/mnt/ramdisk"
+readonly OVERLAY="${TMPFS_DIR}/${GUEST}-overlay.qcow2"
+readonly MAX_RETRIES=10
+readonly RETRY_DELAY=3
+
+# State variables
 do_stop_network=0
 do_stop_guest=0
 do_wipe=0
 do_overlay=0
+do_monitor=0
+sudo_background_pid=""
+monitor_background_pid=""
+vm_config=""
+
+# Logging functions
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >&2
+}
+
+log_error() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $*" >&2
+}
 
 help() {
-  echo "Usage: vm-run [options]"
-  echo " -o|--overlay : use ramfs overlay for write operations"
-  echo " -w|--wipe : remove changes after execution (imply overlay)"
-  exit $1
+    cat << EOF
+Usage: vm-run [options]
+ -o|--overlay : use ramfs overlay for write operations
+ -w|--wipe    : remove changes after execution (requires overlay)
+ -m|--monitor : monitor overlay size in real-time (requires overlay)
+ -h|--help    : show this help message
+
+Environment variables:
+ VM_GUEST     : override guest name (default: $GUEST)
+ VM_NETWORK   : override network name (default: $NETWORK)
+EOF
+    exit "${1:-0}"
+}
+
+# Validation functions
+validate_dependencies() {
+    local missing_deps=()
+    
+    if ! command -v virsh &> /dev/null; then
+        missing_deps+=("virsh")
+    fi
+    if ! command -v virt-viewer &> /dev/null; then
+        missing_deps+=("virt-viewer")
+    fi
+    if [[ $do_overlay == 1 ]] && ! command -v qemu-img &> /dev/null; then
+        missing_deps+=("qemu-img")
+    fi
+    
+    if [[ ${#missing_deps[@]} -gt 0 ]]; then
+        log_error "Missing required dependencies: ${missing_deps[*]}"
+        exit 1
+    fi
+}
+
+validate_guest_exists() {
+    if ! virsh dominfo "$GUEST" &> /dev/null; then
+        log_error "Guest '$GUEST' does not exist"
+        exit 1
+    fi
+}
+
+# Monitor overlay size in real-time
+monitor_overlay_size() {
+    while [[ -f "$OVERLAY" ]]; do
+        local size
+        size=$(du -h "$OVERLAY" 2>/dev/null | awk '{print $1}' || echo "N/A")
+        log "Overlay size: $size" >&2
+        sleep 10
+    done
 }
 
 start_network() {
-  if virsh net-list | grep -q "${NETWORK}.*active"; then
-    echo "Network ${NETWORK} is already active."
-    return 0
-  fi
-
-  echo "Starting network"
-  if ! virsh net-start "${NETWORK}"; then
-    echo "Failed to start network: ${NETWORK}" >&2
-    return 1
-  fi
-
-  max_retries=10
-  retries=0
-  while ! virsh net-list | grep -q "${NETWORK}.*active"; do
-    if [[ $retries -ge $max_retries ]]; then
-      echo "Network did not shut down after $max_retries attempts."
-      return 1
+    if virsh net-list | grep -q "${NETWORK}.*active"; then
+        log "Network ${NETWORK} is already active"
+        return 0
     fi
-    echo "Waiting for network to start... Attempt $((retries + 1))/$max_retries"
-    sleep 3
-    ((retries++))
-  done
-  do_stop_network=1
-  return 0
+
+    log "Starting network ${NETWORK}"
+    if ! virsh net-start "${NETWORK}"; then
+        log_error "Failed to start network: ${NETWORK}"
+        return 1
+    fi
+
+    local retries=0
+    while ! virsh net-list | grep -q "${NETWORK}.*active"; do
+        if [[ $retries -ge $MAX_RETRIES ]]; then
+            log_error "Network did not start after $MAX_RETRIES attempts"
+            return 1
+        fi
+        log "Waiting for network to start... Attempt $((retries + 1))/$MAX_RETRIES"
+        sleep $RETRY_DELAY
+        ((retries++))
+    done
+    do_stop_network=1
+    log "Network ${NETWORK} started successfully"
+    return 0
 }
 
 stop_network() {
-  if [[ $do_stop_network == 0 ]]; then
-    return
-  fi
-  if ! virsh net-list | grep -q "${NETWORK}.*active"; then
-    return
-  fi
-
-  echo "Stopping network"
-  if ! virsh net-destroy "${NETWORK}"; then
-    echo "Failed to destroy network: ${NETWORK}" >&2
-    return
-  fi
-
-  max_retries=10
-  retries=0
-  while virsh net-list | grep -q "${NETWORK}.*active"; do
-    if [[ $retries -ge $max_retries ]]; then
-      echo "Network did not shut down after $max_retries attempts. Proceeding anyway."
-      break
+    if [[ $do_stop_network == 0 ]]; then
+        return 0
     fi
-    virsh net-destroy "${NETWORK}"
-    echo "Waiting for network to shut down. Attempt $((retries + 1))/$max_retries"
-    sleep 3
-    ((retries++))
-  done
+    if ! virsh net-list | grep -q "${NETWORK}.*active"; then
+        log "Network ${NETWORK} is already stopped"
+        return 0
+    fi
+
+    log "Stopping network ${NETWORK}"
+    if ! virsh net-destroy "${NETWORK}"; then
+        log_error "Failed to destroy network: ${NETWORK}"
+        return 1
+    fi
+
+    local retries=0
+    while virsh net-list | grep -q "${NETWORK}.*active"; do
+        if [[ $retries -ge $MAX_RETRIES ]]; then
+            log_error "Network did not shut down after $MAX_RETRIES attempts. Proceeding anyway."
+            break
+        fi
+        if [[ $retries -gt 0 ]]; then
+            virsh net-destroy "${NETWORK}" 2>/dev/null || true
+        fi
+        log "Waiting for network to shut down. Attempt $((retries + 1))/$MAX_RETRIES"
+        sleep $RETRY_DELAY
+        ((retries++))
+    done
+    log "Network ${NETWORK} stopped"
 }
 
 start_guest() {
-  if virsh list | grep -q "${GUEST}.*running"; then
-    echo "Guest is already running."
-    return 0
-  fi
-
-  echo "Starting guest"
-  if ! virsh start "${GUEST}"; then
-    echo "Failed to start guest: ${GUEST}" >&2
-    return 1
-  fi
-
-  max_retries=10
-  retries=0
-  while ! virsh list | grep -q "${GUEST}.*running"; do
-    if [[ $retries -ge $max_retries ]]; then
-      echo "Guest ${GUEST} did not started after $max_retries attempts."
-      return 1
+    if virsh list | grep -q "${GUEST}.*running"; then
+        log "Guest ${GUEST} is already running"
+        return 0
     fi
-    echo "Waiting for guest to start. Attempt $((retries + 1))/$max_retries"
-    sleep 3
-    ((retries++))
-  done
-  do_stop_guest=1
-  return 0
+
+    log "Starting guest ${GUEST}"
+    if ! virsh start "${GUEST}"; then
+        log_error "Failed to start guest: ${GUEST}"
+        return 1
+    fi
+
+    local retries=0
+    while ! virsh list | grep -q "${GUEST}.*running"; do
+        if [[ $retries -ge $MAX_RETRIES ]]; then
+            log_error "Guest ${GUEST} did not start after $MAX_RETRIES attempts"
+            return 1
+        fi
+        log "Waiting for guest to start. Attempt $((retries + 1))/$MAX_RETRIES"
+        sleep $RETRY_DELAY
+        ((retries++))
+    done
+    do_stop_guest=1
+    log "Guest ${GUEST} started successfully"
+    return 0
 }
 
 stop_guest() {
-  if [[ $do_stop_guest == 0 ]]; then
-    return
-  fi
-
-  if ! virsh list | grep -q "${GUEST}.*running"; then
-    return
-  fi
-
-  echo "Stopping guest"
-  if ! virsh shutdown "${GUEST}"; then
-    echo "Failed to shutdown guest: ${GUEST}" >&2
-    virsh destroy "${GUEST}"
-    return
-  fi
-  sleep 3
-
-  max_retries=10
-  retries=0
-  while virsh list | grep -q "${GUEST}.*running"; do
-    if [[ $retries -ge $max_retries ]]; then
-      echo "Guest did not shutdown after $max_retries attempts. Stopping."
-      virsh destroy "${GUEST}"
-      break
+    if [[ $do_stop_guest == 0 ]]; then
+        return 0
     fi
-    virsh shutdown "${GUEST}"
-    echo "Waiting for guest to shut down. Attempt $((retries + 1))/$max_retries"
-    sleep 3
-    ((retries++))
-  done
+
+    if ! virsh list | grep -q "${GUEST}.*running"; then
+        log "Guest ${GUEST} is already stopped"
+        return 0
+    fi
+
+    log "Stopping guest ${GUEST}"
+    if ! virsh shutdown "${GUEST}"; then
+        log_error "Failed to shutdown guest: ${GUEST}, forcing stop"
+        virsh destroy "${GUEST}" || true
+        return 0
+    fi
+    sleep $RETRY_DELAY
+
+    local retries=0
+    while virsh list | grep -q "${GUEST}.*running"; do
+        if [[ $retries -ge $MAX_RETRIES ]]; then
+            log "Guest did not shutdown gracefully after $MAX_RETRIES attempts. Forcing stop."
+            virsh destroy "${GUEST}" || true
+            break
+        fi
+        if [[ $retries -gt 0 ]]; then
+            virsh shutdown "${GUEST}" 2>/dev/null || true
+        fi
+        log "Waiting for guest to shut down. Attempt $((retries + 1))/$MAX_RETRIES"
+        sleep $RETRY_DELAY
+        ((retries++))
+    done
+    log "Guest ${GUEST} stopped"
 }
 
 prepare_overlay() {
-  # Exit on errors
-  set -e # Exit on errors
-  set -o pipefail # Catch errors in pipes
+    local base_image
+    local updated_config
 
-  # Find the guest base image
-  echo "Finding the base image for guest"
-  BASE_IMAGE=$(virsh domblklist "${GUEST}" --details | awk '$2 == "disk" {print $4}')
-  if [[ -z "${BASE_IMAGE}" ]]; then
-    echo "Error: base image not defined" >&2
-    exit 1
-  fi
-  if [[ ! -f "${BASE_IMAGE}" ]]; then
-    echo "Error: base image \"${BASE_IMAGE}\" not found" >&2
-    exit 1
-  fi
+    # Find the guest base image
+    log "Finding the base image for guest ${GUEST}"
+    base_image=$(virsh domblklist "${GUEST}" --details | awk '$2 == "disk" {print $4}')
+    if [[ -z "${base_image}" ]]; then
+        log_error "Base image not defined for guest ${GUEST}"
+        return 1
+    fi
+    if [[ ! -f "${base_image}" ]]; then
+        log_error "Base image \"${base_image}\" not found"
+        return 1
+    fi
+    log "Found base image: ${base_image}"
 
-  # Create a tmpfs directory for the overlay
-  echo "Setting up tmpfs directory"
-  if ! mountpoint -q "${TMPFS_DIR}"; then
-    sudo mkdir -p "${TMPFS_DIR}"
-    sudo mount -t tmpfs -o size=${OVERLAY_MAX_SIZE} tmpfs "${TMPFS_DIR}" 
-  fi
+    # Create a tmpfs directory for the overlay
+    log "Setting up tmpfs directory ${TMPFS_DIR}"
+    if ! mountpoint -q "${TMPFS_DIR}"; then
+        sudo mkdir -p "${TMPFS_DIR}"
+        if ! sudo mount -t tmpfs -o "size=${OVERLAY_MAX_SIZE}" tmpfs "${TMPFS_DIR}"; then
+            log_error "Failed to mount tmpfs at ${TMPFS_DIR}"
+            return 1
+        fi
+    fi
 
-  # Create an overlay in RAM
-  echo "Creating overlay in tmpfs"
-  sudo qemu-img create -f qcow2 -b "${BASE_IMAGE}" -F qcow2 "${OVERLAY}"
-  echo "Overlay created: ${OVERLAY}"
+    # Create an overlay in RAM
+    log "Creating overlay in tmpfs"
+    if ! sudo qemu-img create -f qcow2 -b "${base_image}" -F qcow2 "${OVERLAY}"; then
+        log_error "Failed to create overlay image"
+        return 1
+    fi
+    log "Overlay created: ${OVERLAY}"
 
-  if [[ $do_wipe == 1 ]]; then
-    echo "Disabling swap TODO"
-    # sudo swapoff -a
-  fi
+    if [[ $do_wipe == 1 ]]; then
+        log "Note: Swap disabling is disabled (TODO)"
+        # sudo swapoff -a
+    fi
 
-  # Update VM configuration to use the overlay
-  echo "Updating guest configuration to use the overlay"
-  vm_config=$(virsh dumpxml "${GUEST}")
-  updated_config=$(echo "${vm_config}" | sed "s|<source file='[^']*'|<source file='${OVERLAY}'|")
-  echo "${updated_config}" | virsh define /dev/stdin
-  echo "Guest configuration updated to use the overlay."
-
-  # Disable exit on errors
-  set +e
-  set +o pipefail
+    # Update VM configuration to use the overlay
+    log "Updating guest configuration to use the overlay"
+    vm_config=$(virsh dumpxml "${GUEST}")
+    updated_config=$(echo "${vm_config}" | sed "s|<source file='[^']*'|<source file='${OVERLAY}'|")
+    if ! echo "${updated_config}" | virsh define /dev/stdin; then
+        log_error "Failed to update guest configuration"
+        return 1
+    fi
+    log "Guest configuration updated to use the overlay"
 }
 
 # Restore original VM configuration
 restore_original() {
-  echo "Restoring guest original configuration"
-  echo "${vm_config}" | virsh define /dev/stdin
+    if [[ -n "$vm_config" ]]; then
+        log "Restoring guest original configuration"
+        if ! echo "${vm_config}" | virsh define /dev/stdin; then
+            log_error "Failed to restore original guest configuration"
+            return 1
+        fi
+    fi
 }
 
 # Commit overlay
 commit_overlay() {
-  local overlay_size=$(du -h $OVERLAY | awk '{ print $1 }')
-  echo "Committing overlay changes into the guest base image ($overlay_size)"
-  sudo qemu-img commit -p "${OVERLAY}"
+    if [[ ! -f "$OVERLAY" ]]; then
+        log_error "Overlay file not found: $OVERLAY"
+        return 1
+    fi
+    
+    local overlay_size
+    overlay_size=$(du -h "$OVERLAY" | awk '{ print $1 }')
+    log "Committing overlay changes into the guest base image ($overlay_size)"
+    if ! sudo qemu-img commit -p "${OVERLAY}"; then
+        log_error "Failed to commit overlay changes"
+        return 1
+    fi
+    log "Overlay changes committed successfully"
 }
 
 # Clean up the tmpfs directory
 delete_overlay() {
-  echo "Cleaning up overlay"
-  if [[ $do_wipe == 1 ]]; then
-    echo "Wiping"
-    sudo shred -z --remove=wipesync "${OVERLAY}"
-  fi
-  sudo rm -f "${OVERLAY}"
-  sudo umount -l "${TMPFS_DIR}"
-  sudo rm -rf "${TMPFS_DIR}"
+    log "Cleaning up overlay"
+    if [[ -f "$OVERLAY" ]]; then
+        if [[ $do_wipe == 1 ]]; then
+            log "Securely wiping overlay"
+            sudo shred -z --remove=wipesync "${OVERLAY}" || {
+                log_error "Failed to securely wipe overlay, removing normally"
+                sudo rm -f "${OVERLAY}"
+            }
+        else
+            sudo rm -f "${OVERLAY}"
+        fi
+    fi
+    
+    if mountpoint -q "${TMPFS_DIR}"; then
+        if ! sudo umount "${TMPFS_DIR}"; then
+            log_error "Failed to unmount ${TMPFS_DIR}, trying lazy unmount"
+            sudo umount -l "${TMPFS_DIR}" || true
+        fi
+    fi
+    
+    if [[ -d "$TMPFS_DIR" ]]; then
+        sudo rm -rf "${TMPFS_DIR}"
+    fi
+    log "Overlay cleanup completed"
 }
 
 # Define a cleanup function
 cleanup() {
-    echo "Cleaning up..."
-    # Kill the background job
-    echo "Kill $sudo_background_pid"
-    kill "$sudo_background_pid"
+    log "Performing cleanup..."
+    
+    # Kill the background sudo refresh job
+    if [[ -n "$sudo_background_pid" ]]; then
+        log "Stopping sudo refresh process ($sudo_background_pid)"
+        kill "$sudo_background_pid" 2>/dev/null || true
+        wait "$sudo_background_pid" 2>/dev/null || true
+    fi
+    
+    # Kill the background overlay monitor job
+    if [[ -n "$monitor_background_pid" ]]; then
+        log "Stopping overlay size monitor process ($sudo_background_pid)"
+        kill "$monitor_background_pid" 2>/dev/null || true
+        wait "$monitor_background_pid" 2>/dev/null || true
+    fi
+    
+    # Stop guest and network if needed
+    stop_guest || true
+    stop_network || true
+    
+    # Restore original configuration and clean up overlay
+    if [[ $do_overlay == 1 ]]; then
+        restore_original || true
+        if [[ $do_wipe == 0 ]]; then
+            commit_overlay || true
+        fi
+        delete_overlay || true
+    fi
 }
 
 run() {
-  start_network
-  if [[ $? == 1 ]]; then
-    exit 1
-  fi
-
-  if [[ $do_overlay == 1 ]]; then
-    sudo -v
-    # Refresh sudo cretentials every 60 seconds
-    (while true; do sudo -v; sleep 60; done) &
-    # Get the PID of the background job
-    sudo_background_pid=$!
     # Set the trap to call cleanup on EXIT, INT, or TERM
     trap cleanup EXIT INT TERM
-    prepare_overlay
-  fi
-  start_guest
-  start_res=$?
-  if [[ $do_overlay == 1 ]]; then
-    restore_original
-  fi
-  if [[ $start_res == 1 ]]; then
-    exit 1
-  fi
-
-  # virt-manager -c qemu:///system --show-domain-console ${GUEST} > /dev/null 2>&1 &
-  virt-viewer -a --domain-name ${GUEST} > /dev/null 2>&1 &
-  local viewer_pid=$!
-
-  echo "Waiting for virt-viewer (${viewer_pid})"
-  wait "${viewer_pid}"
-  echo "virt-viewer manager stopped"
-
-  stop_guest
-  stop_network
-
-  if [[ $do_overlay == 1 ]]; then
-    if [[ $do_wipe == 0 ]]; then
-      commit_overlay
+    
+    log "Starting VM run process for guest: ${GUEST}"
+    
+    # Start network
+    if ! start_network; then
+        log_error "Failed to start network"
+        exit 1
     fi
-    delete_overlay
-  fi
+
+    # Setup overlay if requested
+    if [[ $do_overlay == 1 ]]; then
+        log "Setting up overlay mode"
+        sudo -v
+        # Refresh sudo credentials every 60 seconds
+        (while true; do sudo -v; sleep 60; done) &
+        sudo_background_pid=$!
+        
+        if ! prepare_overlay; then
+            log_error "Failed to prepare overlay"
+            exit 1
+        fi
+
+        # Start overlay size monitoring if requested
+        if [[ $do_monitor == 1 ]]; then
+            monitor_overlay_size &
+            monitor_background_pid=$!
+            log "Started overlay size monitoring (PID: ${monitor_background_pid})"
+        fi
+    fi
+    
+    # Start guest
+    if ! start_guest; then
+        log_error "Failed to start guest"
+        exit 1
+    fi
+
+    # Launch viewer
+    log "Launching virt-viewer for guest ${GUEST}"
+    virt-viewer -a --domain-name "${GUEST}" > /dev/null 2>&1 &
+    local viewer_pid=$!
+    
+    # Check if the process started successfully
+    sleep 1
+    if ! kill -0 "$viewer_pid" 2>/dev/null; then
+        log_error "Failed to launch virt-viewer"
+        exit 1
+    fi
+
+    log "Waiting for virt-viewer (PID: ${viewer_pid}) to close"
+    wait "${viewer_pid}"
+    log "virt-viewer closed"
+
+    # Cleanup will be handled by the trap
 }
 
-# Parse CLI options
-while [[ "$#" -gt 0 ]]; do
-    case $1 in
-        -w|--wipe)
-          do_wipe=1
-          do_overlay=1
-          ;;
-        -o|--overlay)
-          do_overlay=1
-          ;;
-        -h|--help)
-          help 0
-          ;;
-        *)
-          echo "Unknown option: $1" >&2;
-          help 1
-    esac
-    shift
-done
+# Main execution
+main() {
+    # Allow environment variable overrides
+    if [[ -n "${VM_GUEST:-}" ]]; then
+        readonly GUEST="$VM_GUEST"
+    fi
+    if [[ -n "${VM_NETWORK:-}" ]]; then
+        readonly NETWORK="$VM_NETWORK"
+    fi
+    
+    # Parse CLI options
+    while [[ "$#" -gt 0 ]]; do
+        case $1 in
+            -w|--wipe)
+                do_wipe=1
+                ;;
+            -o|--overlay)
+                do_overlay=1
+                ;;
+            -m|--monitor)
+                do_monitor=1
+                ;;
+            -h|--help)
+                help 0
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                help 1
+                ;;
+        esac
+        shift
+    done
 
-# Check dependencies
-if ! command -v virsh &> /dev/null; then
-    echo "'virsh' is not available."
-    exit 1
-fi
-if ! command -v virt-viewer &> /dev/null; then
-    echo "'virt-viewer' is not available."
-    exit 1
-fi
+    # Validate that monitor and wipe options require overlay
+    if [[ $do_monitor == 1 && $do_overlay == 0 ]]; then
+        log_error "Monitor option (-m|--monitor) requires overlay mode (-o|--overlay)"
+        exit 1
+    fi
+    if [[ $do_wipe == 1 && $do_overlay == 0 ]]; then
+        log_error "Wipe option (-w|--wipe) requires overlay mode (-o|--overlay)"
+        exit 1
+    fi
 
-run
+    # Validate dependencies and configuration
+    validate_dependencies
+    validate_guest_exists
+    
+    # Run the main process
+    run
+}
+
+# Only run main if script is executed directly (not sourced)
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
