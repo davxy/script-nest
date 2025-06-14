@@ -5,23 +5,50 @@
 # Author: Davide Galassi <davxy@datawok.net>
 # Version: 0.1.0
 
-preview_func() {
-	local session="$1"
-	local tmpfile=$(mktemp /tmp/zellij-preview-dump.XXXXXX)
-	local is_curr=$(echo $session | grep "current")
-	if [[ $is_curr != "" ]]; then
-		echo "--current--"
-		return
-	fi
-	zellij -s "$session" action dump-screen $tmpfile
-	bat --plain --color always --language bash $tmpfile
-	rm $tmpfile
-}
+# Create a temporary script for the preview function
+preview_script=$(mktemp /tmp/zellij-preview-script.XXXXXX)
+cat > "$preview_script" << 'EOF'
+#!/usr/bin/env bash
+session="$1"
+tmpfile=$(mktemp /tmp/zellij-preview-dump.XXXXXX)
 
-export -f preview_func
+# Check if this is the current session
+if [[ "$session" == *"(current)"* ]]; then
+    echo "=== CURRENT SESSION ==="
+    echo "This is the currently active session"
+    rm "$tmpfile"
+    exit 0
+fi
 
-session=$(zellij list-sessions | grep -v "EXITED" | awk '{print $1}'| fzf --ansi --preview-window 'up' --preview 'preview_func {}')
+# Extract just the session name (remove any status indicators)
+session_name=$(echo "$session" | awk '{print $1}')
 
-if [[ $session != "" ]]; then
-	zellij attach $session
+# Try to dump the session screen
+if zellij -s "$session_name" action dump-screen "$tmpfile" 2>/dev/null; then
+    if command -v bat >/dev/null 2>&1; then
+        bat --plain --color always --language bash "$tmpfile"
+    else
+        cat "$tmpfile"
+    fi
+else
+    echo "=== SESSION: $session_name ==="
+    echo "Unable to preview session (may be detached or inactive)"
+fi
+
+rm "$tmpfile"
+EOF
+
+chmod +x "$preview_script"
+
+# Get sessions and let user select with preview
+session=$(zellij list-sessions 2>/dev/null | grep -v "EXITED" | fzf --ansi --preview-window 'up:50%' --preview "$preview_script {}")
+
+# Clean up the temporary script
+rm "$preview_script"
+
+# Attach to selected session if one was chosen
+if [[ -n "$session" ]]; then
+    # Extract just the session name
+    session_name=$(echo "$session" | awk '{print $1}')
+    zellij attach "$session_name"
 fi
