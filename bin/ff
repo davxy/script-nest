@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.1.11
+# Version: 0.1.12
 #
 # Fast tool to search into files using fuzzy finder
 #
 # Depends on
 # - fzf
 # - ripgrep
+# - bat
 # - wl-copy (optional): to copy to clipboard a result via <C-y>.
 #                       Can be replaced by any clipboard manager.
 #
 # Text editor assumptions:
 # - `EDITOR` variable set to default editor.
 # - Should be able to open a file like: `$EDITOR file:line`
+
+set -euo pipefail
 
 # Options
 edit=0
@@ -30,38 +33,64 @@ COPY_FILE_PATH='ctrl-y:execute(echo -n {1}:{2} | wl-copy)'
 KEYS="$COPY_FILE_PATH"
 
 function help() {
-    echo "Usage: ff [options] [FILE]"    
-    echo "  -e: Edit the selected file(s)"
-    echo "  -i: Case insensitive search"
-    echo "  -h: Display this help message"
-    echo "  -q: Query"
-    echo "  -x: Exit on execution"
-    echo "  -f: Include file path"
-    echo "  -v: Verbose result"
-    echo "  -b: Binary file"
-    echo "  -c: Enable cyclic scrolling"
-    echo "  FILE: Specify the input file or directory to search into (default CWD)"
-    exit
+    cat << EOF
+Usage: ff [options] [FILE]
+  -e: Edit the selected file(s)
+  -i: Case insensitive search
+  -h: Display this help message
+  -q: Query
+  -x: Exit on execution
+  -f: Include file path in search
+  -v: Verbose result
+  -c: Enable cyclic scrolling
+  FILE: Specify the input file or directory to search into (default CWD)
+EOF
+    exit 0
 }
 
+function check_dependencies() {
+    local missing=()
+    command -v fzf >/dev/null || missing+=("fzf")
+    command -v rg >/dev/null || missing+=("ripgrep")
+    command -v bat >/dev/null || missing+=("bat")
+    
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo "Error: Missing required dependencies: ${missing[*]}" >&2
+        echo "Please install them and try again." >&2
+        exit 1
+    fi
+}
 
 function get_column() {
-    filename="$1"
-    line=$2
-    query="$3"
+    local filename="$1"
+    local line="$2"
+    local query="$3"
+    
     # Get column of first word in query
-    word=$(echo $query | cut -d' ' -f1)   
-    line_content=$(sed -n "${line}p" "$file")
-    column=$(echo "$line_content" | grep -b -o "$word" | head -1 | cut -d':' -f1)
+    local word
+    word=$(echo "$query" | cut -d' ' -f1)
+    
+    if [[ -z "$word" ]]; then
+        echo "1"
+        return
+    fi
+    
+    local line_content
+    line_content=$(sed -n "${line}p" "$filename" 2>/dev/null || echo "")
+    
+    local column
+    column=$(echo "$line_content" | grep -b -o "$word" | head -1 | cut -d':' -f1 2>/dev/null || echo "0")
     column=$((column + 1))
-    echo $column
+    echo "$column"
 }
 
 function search_folder() {
-    preview_cmd="bat --style=full --color=always --highlight-line {2} {1}"
-    preview_win="up,~4,+{2}+4/2,$preview_ratio"
+    local preview_cmd="bat --style=full --color=always --highlight-line {2} {1}"
+    local preview_win="up,~4,+{2}+4/2,$preview_ratio"
+    
     while true; do
         # Search using rg and fzf with preview
+        local out
         out=$(rg . --line-number --no-heading --glob '!.git' | \
               fzf -m \
                 ${ignore_case} \
@@ -77,26 +106,34 @@ function search_folder() {
                 --print-query --query="$query" \
                 --preview "$preview_cmd" \
                 --preview-window "$preview_win" \
-                --bind "$KEYS")
-
-        if [[ $? != 0 ]]; then
-            break
-        fi
+                --bind "$KEYS") || break
 
         # Extract new query
-        query=$(echo "$out" | cut -d$'\n' -f1)
+        query=$(echo "$out" | head -1)
         # Remove cruft leaving something like: 'file:line'
-        results=$(echo "$out" | cut -d$'\n' -f2- | sed -E 's/([^:]*):([0-9]*):.*/\1:\2/')
-        file=$(echo $results | cut -d':' -f1)
-        line=$(echo $results | cut -d':' -f2)
-        column=$(get_column "$file" $line "$query")
-
+        local results
+        results=$(echo "$out" | tail -n +2 | sed -E 's/([^:]*):([0-9]*):.*/\1:\2/')
+        
+        if [[ -z "$results" ]]; then
+            continue
+        fi
+        
+        local file line column
+        file=$(echo "$results" | cut -d':' -f1)
+        line=$(echo "$results" | cut -d':' -f2)
+        
+        if [[ ! -f "$file" ]]; then
+            echo "Error: File not found: $file" >&2
+            continue
+        fi
+        
+        column=$(get_column "$file" "$line" "$query")
         file=$(realpath "$file")
-        flc="${file}:${line}:${column}"
+        local flc="${file}:${line}:${column}"
 
         # Check if we want to edit the results
-        if [[ $edit == 1 && $results != "" ]]; then
-            $EDITOR $flc
+        if [[ $edit == 1 ]]; then
+            "${EDITOR:-vi}" "$flc"
         else
             echo "$flc"
             if [[ $verbose == 1 ]]; then
@@ -108,27 +145,35 @@ function search_folder() {
 }
 
 function search_file() {
-    file="$1"
-
-    tmpfile=""
-    if [ ! -f $file ]; then
-        tmpfile=$(mktemp ff.XXXXXXXX)
+    local file="$1"
+    local tmpfile=""
+    
+    if [[ ! -f "$file" ]]; then
+        tmpfile=$(mktemp -t ff.XXXXXX)
         # Dump at most 100M
-        dd if=$file of="$tmpfile" iflag=fullblock bs=1M count=100 2>/dev/null
-        file=$tmpfile
-        file_size_bytes=$(stat -c %s $file)
-        file_size_mib=$(echo "scale=2; $file_size_bytes / (1024 * 1024)" | bc)
+        if ! dd if="$file" of="$tmpfile" iflag=fullblock bs=1M count=100 2>/dev/null; then
+            echo "Error: Cannot read file: $file" >&2
+            rm -f "$tmpfile"
+            return 1
+        fi
+        file="$tmpfile"
+        
+        local file_size_bytes
+        file_size_bytes=$(stat -c %s "$file" 2>/dev/null || echo "0")
+        local file_size_mib
+        file_size_mib=$(echo "scale=2; $file_size_bytes / (1024 * 1024)" | bc 2>/dev/null || echo "0")
+        
         # Compare file size in MiB with 100
-        if (( $(echo "$file_size_mib > 100" | bc -l) )); then
-            truncate -s 100M $file
-            mv "$file" "${file}-truncated"
-            file="${file}-truncated"
+        if command -v bc >/dev/null && (( $(echo "$file_size_mib > 100" | bc -l 2>/dev/null || echo "0") )); then
+            truncate -s 100M "$file" 2>/dev/null || true
         fi
     fi
 
-    preview_cmd="bat --style=full --paging=never --color=always --highlight-line {1} $file"
-    preview_win="up,~4,+{1}+4/2,$preview_ratio"
+    local preview_cmd="bat --style=full --paging=never --color=always --highlight-line {1} $file"
+    local preview_win="up,~4,+{1}+4/2,$preview_ratio"
+    
     while true; do
+        local result
         result=$(bat --plain --color always "$file" | \
             nl -ba -w1 -s": " | \
             fzf \
@@ -143,22 +188,26 @@ function search_file() {
                 --print-query \
                 --query="$query" \
                 --preview "$preview_cmd" \
-                --preview-window "$preview_win" | \
-            cut -d':' -f1)
+                --preview-window "$preview_win") || break
 
-        if [[ $result == "" ]]; then
+        if [[ -z "$result" ]]; then
             break
         fi
 
-        # Extract query
-        query=$(echo "$result" | cut -d$'\n' -f1)
-        line=$(echo "$result" | cut -d$'\n' -f2)
-        column=$(get_column "$file" $line "$query")
-
-        file=$(realpath "$file")
-        flc="${file}:${line}:${column}"
+        # Extract query and line
+        query=$(echo "$result" | head -1)
+        local line
+        line=$(echo "$result" | tail -1 | cut -d':' -f1)
+        
+        local column
+        column=$(get_column "$file" "$line" "$query")
+        
+        local real_file
+        real_file=$(realpath "$file")
+        local flc="${real_file}:${line}:${column}"
+        
         if [[ $edit == 1 ]]; then
-            $EDITOR $flc
+            "${EDITOR:-vi}" "$flc"
         else
             echo "$flc"
             if [[ $verbose == 1 ]]; then
@@ -168,7 +217,7 @@ function search_file() {
         fi
     done
 
-    rm -f $tmpfile
+    [[ -n "$tmpfile" ]] && rm -f "$tmpfile"
 }
 
 while getopts "ceiq:xfhv" opt; do
@@ -180,35 +229,41 @@ while getopts "ceiq:xfhv" opt; do
         f) fzf_nth="1.." ;;
         v) verbose=1 ;;
         c) cycle="--cycle" ;;
-        h | *) help ;;
+        h) help ;;
+        *) echo "Invalid option. Use -h for help." >&2; exit 1 ;;
     esac
 done
 
-if [ -p /dev/stdin ]; then
+# Check dependencies before proceeding
+check_dependencies
+
+if [[ -p /dev/stdin ]]; then
     path="/dev/stdin"
 else
     # Check if there is a file or a folder
     shift $((OPTIND-1))
-    if [ $# -gt 0 ]; then
+    if [[ $# -gt 0 ]]; then
         path="$1"
     else
         path="$PWD"
     fi
 fi
 
+# Validate path exists
+if [[ ! -e "$path" && "$path" != "/dev/stdin" ]]; then
+    echo "Error: Path does not exist: $path" >&2
+    exit 1
+fi
+
 # Optional flag for execution and exit behavior
 if [[ $exit_on_exec == 1 ]]; then
-  KEYS="$KEYS+abort"
+    KEYS="$KEYS+abort"
 fi
 
-if [[ $include_file == 1 ]]; then
-    fzf_nth=
-fi
-
-if [ -d "$path" ]; then
-    pushd "$path" > /dev/null
+if [[ -d "$path" ]]; then
+    pushd "$path" > /dev/null || exit 1
     search_folder
-    popd > /dev/null
+    popd > /dev/null || exit 1
 else
     search_file "$path"
 fi
