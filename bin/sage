@@ -1,0 +1,87 @@
+#!/bin/bash
+#
+# Sage start in a docker machine
+
+# Configuration
+CONF_DIR="${SAGE_CONF_DIR:-${HOME}/.sage}"
+WORK_DIR="${SAGE_WORK_DIR:-.}"
+DOCKER_IMAGE="sagemath/sagemath"
+JUPYTER_PORT="8888"
+BROWSER_DELAY=5
+
+show_help() {
+    cat << EOF
+usage: sage [OPTIONS] [MODE]
+
+Spawns Sage in a docker container
+
+MODES:
+    (none)      Start interactive Sage shell (default)
+    jupyter     Start Jupyter notebook server
+    shell       Start bash shell in container
+
+OPTIONS:
+    -h          Show this help message
+
+ENVIRONMENT VARIABLES:
+    SAGE_CONF_DIR       Configuration directory (default: ~/.sage)
+    SAGE_WORK_DIR       Working directory (default: ~/develop/sage)
+
+EXAMPLES:
+    sage                # Start interactive Sage
+    sage jupyter        # Start Jupyter notebook
+    SAGE_WORK_DIR=/tmp/sage sage    # Use custom work directory
+EOF
+}
+
+start_jupyter_browser() {
+    (sleep "$BROWSER_DELAY" && firefox "http://localhost:${JUPYTER_PORT}") &
+}
+
+run_sage_container() {
+    local sage_arg="$1"
+    
+    # Ensure directories exist
+    mkdir -p "$CONF_DIR" "$WORK_DIR"
+    
+    docker run \
+        -ti --rm \
+        --user "$(id -u):$(id -g)" \
+        -p "${JUPYTER_PORT}:${JUPYTER_PORT}" \
+        -v "${CONF_DIR}:/home/sage/.sage" \
+        -v "${WORK_DIR}:/home/sage/work" \
+        -w "/home/sage/work" \
+        "$DOCKER_IMAGE" $sage_arg
+}
+
+main() {
+    local mode="$1"
+    local sage_arg=""
+    
+    case "$mode" in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        jupyter)
+            sage_arg="sage-jupyter"
+            start_jupyter_browser
+            ;;
+        shell)
+            sage_arg="/bin/bash"
+            ;;
+        "")
+            # Default interactive mode
+            ;;
+        *)
+            echo "Error: Unknown mode '$mode'" >&2
+            echo "Use 'sage -h' for help" >&2
+            exit 1
+            ;;
+    esac
+    
+    run_sage_container "$sage_arg"
+}
+
+main "$@"
+
