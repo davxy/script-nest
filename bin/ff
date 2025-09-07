@@ -237,6 +237,11 @@ done
 # Check dependencies before proceeding
 check_dependencies
 
+# Ignore single char queries
+if [[ ${#query} -le 1 ]]; then
+    query=""
+fi
+
 if [[ -p /dev/stdin ]]; then
     path="/dev/stdin"
 else
