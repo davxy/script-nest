@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.1.1
+# Version: 0.3.0
 #
 # Utility for common "remote" actions
 
@@ -16,7 +16,28 @@ if [[ ${HOSTNAME} == ${REMOTE_NAME} ]]; then
 fi
 
 function remote_start() {
+    echo "Sending wake-on-LAN packet to ${REMOTE_NAME}..."
     wol ${MACADDR}
+    
+    if [[ $1 == "--wait" ]]; then
+        echo "Waiting for ${REMOTE_NAME} to come online..."
+        local attempts=0
+        local max_attempts=30
+        
+        while [[ $attempts -lt $max_attempts ]]; do
+            if ping -c 1 -W 2 ${REMOTE_NAME} &>/dev/null; then
+                echo "✓ ${REMOTE_NAME} is now online!"
+                return 0
+            fi
+            echo -n "."
+            sleep 2
+            ((attempts++))
+        done
+        
+        echo ""
+        echo "✗ ${REMOTE_NAME} did not come online within 60 seconds"
+        return 1
+    fi
 }
 
 function remote_stop() {
@@ -44,12 +65,171 @@ function remote_umount() {
     sudo umount ${target}
 }
 
-function remote_sway() {
-    waypipe ssh ${REMOTE_NAME} ls
+function remote_status() {
+    echo "Checking ${REMOTE_NAME} status..."
+    if ping -c 1 -W 2 ${REMOTE_NAME} &>/dev/null; then
+        echo "✓ ${REMOTE_NAME} is reachable"
+        if ssh -o ConnectTimeout=5 ${REMOTE_NAME} true &>/dev/null; then
+            echo "✓ SSH connection successful"
+        else
+            echo "✗ SSH connection failed"
+        fi
+    else
+        echo "✗ ${REMOTE_NAME} is not reachable"
+    fi
 }
 
+function remote_ssh() {
+    echo "Connecting to ${REMOTE_NAME}..."
+    ssh ${REMOTE_NAME}
+}
+
+function remote_copy() {
+    if [[ $# -lt 2 ]]; then
+        echo "Usage: remote copy <source> <destination>"
+        echo "Examples:"
+        echo "  remote copy file.txt remote:~/        # Copy to remote"
+        echo "  remote copy remote:~/file.txt .       # Copy from remote"
+        return 1
+    fi
+    
+    source=$1
+    dest=$2
+    
+    # Replace 'remote:' with actual hostname
+    source=${source/remote:/${REMOTE_NAME}:}
+    dest=${dest/remote:/${REMOTE_NAME}:}
+    
+    echo "Copying ${source} to ${dest}..."
+    scp -r "${source}" "${dest}"
+}
+
+function remote_sway() {
+    echo "Starting remote sway session..."
+    waypipe ssh ${REMOTE_NAME} sway
+}
+
+function remote_logs() {
+    local lines=${1:-50}
+    echo "Fetching last ${lines} lines from ${REMOTE_NAME} system logs..."
+    ssh ${REMOTE_NAME} "journalctl -n ${lines} --no-pager"
+}
+
+function remote_sync() {
+    if [[ $# -lt 2 ]]; then
+        echo "Usage: remote sync <local_path> <remote_path> [--dry-run]"
+        echo "Examples:"
+        echo "  remote sync ./docs/ ~/documents/     # Sync to remote"
+        echo "  remote sync ~/documents/ ./docs/     # Sync from remote"
+        echo "  remote sync ./docs/ ~/documents/ --dry-run  # Preview changes"
+        return 1
+    fi
+    
+    local local_path=$1
+    local remote_path=$2
+    local dry_run=""
+    
+    if [[ $3 == "--dry-run" ]]; then
+        dry_run="--dry-run"
+        echo "DRY RUN - No files will be modified"
+    fi
+    
+    # Determine sync direction based on paths
+    if [[ $local_path == *":"* ]]; then
+        # Syncing from remote to local
+        local_path=${local_path/remote:/${REMOTE_NAME}:}
+        echo "Syncing from ${local_path} to ${remote_path}..."
+        rsync -avz --progress ${dry_run} "${local_path}" "${remote_path}"
+    elif [[ $remote_path == *":"* ]]; then
+        # Syncing from local to remote
+        remote_path=${remote_path/remote:/${REMOTE_NAME}:}
+        echo "Syncing from ${local_path} to ${remote_path}..."
+        rsync -avz --progress ${dry_run} "${local_path}" "${remote_path}"
+    else
+        echo "Error: One path must be prefixed with 'remote:'"
+        return 1
+    fi
+}
+
+function remote_info() {
+    echo "Gathering system information from ${REMOTE_NAME}..."
+    ssh ${REMOTE_NAME} '
+        echo "=== System Information ==="
+        echo "Hostname: $(hostname)"
+        echo "Uptime: $(uptime -p)"
+        echo "Load: $(uptime | cut -d"load average:" -f2)"
+        echo ""
+        echo "=== Memory Usage ==="
+        free -h
+        echo ""
+        echo "=== Disk Usage ==="
+        df -h / /home 2>/dev/null || df -h /
+        echo ""
+        echo "=== Network ==="
+        ip addr show | grep "inet " | grep -v "127.0.0.1"
+        echo ""
+        echo "=== Active Services ==="
+        systemctl list-units --state=running --no-pager | head -10
+    '
+}
+
+function remote_tunnel() {
+    if [[ $# -lt 2 ]]; then
+        echo "Usage: remote tunnel <local_port> <remote_port> [remote_host]"
+        echo "Examples:"
+        echo "  remote tunnel 8080 80           # Forward local 8080 to remote 80"
+        echo "  remote tunnel 5432 5432         # Forward local 5432 to remote 5432"
+        echo "  remote tunnel 3000 3000 localhost  # Explicit remote host"
+        return 1
+    fi
+    
+    local local_port=$1
+    local remote_port=$2
+    local remote_host=${3:-localhost}
+    
+    echo "Creating SSH tunnel: localhost:${local_port} -> ${REMOTE_NAME}:${remote_host}:${remote_port}"
+    echo "Press Ctrl+C to close the tunnel"
+    ssh -L ${local_port}:${remote_host}:${remote_port} ${REMOTE_NAME} -N
+}
+
+function check_dependencies() {
+    local missing=()
+    local cmd=$1
+    
+    case $cmd in
+        "start"|"wake")
+            if ! command -v wol &>/dev/null; then
+                missing+=("wakeonlan")
+            fi
+            ;;
+        "sway")
+            if ! command -v waypipe &>/dev/null; then
+                missing+=("waypipe")
+            fi
+            ;;
+        "sync")
+            if ! command -v rsync &>/dev/null; then
+                missing+=("rsync")
+            fi
+            ;;
+    esac
+    
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo "Missing dependencies for '$cmd': ${missing[*]}"
+        echo "Please install them first."
+        return 1
+    fi
+    
+    return 0
+}
+
+# Check dependencies for commands that need them
+if [[ $1 == "start" || $1 == "wake" || $1 == "sway" || $1 == "sync" ]]; then
+    check_dependencies $1 || exit 1
+fi
+
 if [[ $1 == "start" ]]; then
-    remote_start
+    remote_start $2
 elif [[ $1 == "stop" ]]; then
     remote_stop
 elif [[ $1 == "mount" ]]; then
@@ -57,16 +237,47 @@ elif [[ $1 == "mount" ]]; then
 elif [[ $1 == "umount" ]]; then
     remote_umount $2
 elif [[ $1 == "wake" ]]; then
-    remote_wake
+    remote_start $2
+elif [[ $1 == "status" ]]; then
+    remote_status
+elif [[ $1 == "ssh" ]]; then
+    remote_ssh
+elif [[ $1 == "copy" ]]; then
+    remote_copy $2 $3
 elif [[ $1 == "sway" ]]; then
     remote_sway
+elif [[ $1 == "logs" ]]; then
+    remote_logs $2
+elif [[ $1 == "sync" ]]; then
+    remote_sync $2 $3 $4
+elif [[ $1 == "info" ]]; then
+    remote_info
+elif [[ $1 == "tunnel" ]]; then
+    remote_tunnel $2 $3 $4
 else
     echo "Usage: remote <command>"
     echo ""
     echo "Available commands:"
-    echo " start           Wakeup (using 'wakeonlan')"
+    echo " start [--wait]  Wakeup (using 'wakeonlan'), optionally wait for online"
+    echo " wake [--wait]   Alias for 'start'"
     echo " stop            Shutdown"
+    echo " status          Check if remote is reachable and SSH works"
+    echo " ssh             Connect via SSH"
     echo " mount [dir]     Mount remote share in 'behemoth/dir'"
     echo " umount [dir]    Umount remote share in 'behemoth/dir'"
+    echo " copy <src> <dst> Copy files (use 'remote:' prefix for remote paths)"
+    echo " sync <src> <dst> [--dry-run] Sync directories with rsync"
     echo " sway            Start and connect to a remote sway session (using 'waypipe')"
+    echo " logs [lines]    View remote system logs (default: 50 lines)"
+    echo " info            Show detailed remote system information"
+    echo " tunnel <local> <remote> [host] Create SSH tunnel"
+    echo ""
+    echo "Examples:"
+    echo " remote start --wait"
+    echo " remote status"
+    echo " remote copy file.txt remote:~/"
+    echo " remote sync ./docs/ remote:~/documents/"
+    echo " remote sync remote:~/backup/ ./backup/ --dry-run"
+    echo " remote logs 100"
+    echo " remote tunnel 8080 80"
 fi
