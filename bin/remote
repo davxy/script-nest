@@ -9,6 +9,7 @@ REMOTE_NAME="behemoth"
 MACADDR="d8:5e:d3:02:ed:00"
 SMB_USER="davxy"
 MOUNT_POINT="/home/${SMB_USER}/${REMOTE_NAME}"
+WM="niri"
 
 if [[ ${HOSTNAME} == ${REMOTE_NAME} ]]; then
     echo "Currently logged in ${REMOTE_NAME}"
@@ -105,8 +106,8 @@ function remote_copy() {
 }
 
 function remote_sway() {
-    echo "Starting remote sway session..."
-    waypipe ssh ${REMOTE_NAME} sway
+    echo "Starting remote wm session..."
+    waypipe ssh ${REMOTE_NAME} $WM
 }
 
 function remote_logs() {
@@ -192,6 +193,60 @@ function remote_tunnel() {
     ssh -L ${local_port}:${remote_host}:${remote_port} ${REMOTE_NAME} -N
 }
 
+function remote_discover() {
+    echo "Discovering devices on local network..."
+    
+    # Get the local network range from the default route
+    local gateway_ip=$(ip route | grep default | head -1 | awk '{print $3}')
+    
+    if [[ -z $gateway_ip ]]; then
+        echo "Could not determine gateway IP"
+        return 1
+    fi
+    
+    # Derive network range from gateway IP (assume /24 subnet)
+    local network=$(echo $gateway_ip | sed 's/\.[0-9]*$/\.0\/24/')
+    
+    if [[ -z $network ]]; then
+        echo "Could not determine local network range"
+        return 1
+    fi
+    
+    echo "Scanning network: $network"
+    echo "This may take a moment..."
+    echo ""
+    
+    # Use nmap to discover devices with MAC addresses (scan first 25 IPs only)
+    local base_network=$(echo $gateway_ip | sed 's/\.[0-9]*$//')
+    for i in {1..25}; do
+        nmap -sn "${base_network}.${i}" >/dev/null 2>&1 &
+    done
+    wait
+    
+    echo "Discovered devices:"
+    echo "==================="
+    printf "%-15s %-17s %s\n" "IP Address" "MAC Address" "Hostname"
+    echo "---------------------------------------------------"
+    
+    # Parse ARP table for discovered devices
+    arp -a | while read line; do
+        if [[ $line =~ \(([0-9.]+)\)\ at\ ([a-fA-F0-9:]+) ]]; then
+            ip="${BASH_REMATCH[1]}"
+            mac="${BASH_REMATCH[2]}"
+            hostname=$(echo "$line" | awk '{print $1}')
+            
+            # Skip incomplete entries
+            if [[ $mac != "<incomplete>" ]]; then
+                printf "%-15s %-17s %s\n" "$ip" "$mac" "$hostname"
+            fi
+        fi
+    done
+    
+    echo ""
+    echo "Note: Only devices that responded to the network scan are shown."
+    echo "Some devices may not respond to ping but still be reachable."
+}
+
 function check_dependencies() {
     local missing=()
     local cmd=$1
@@ -212,6 +267,11 @@ function check_dependencies() {
                 missing+=("rsync")
             fi
             ;;
+        "discover")
+            if ! command -v nmap &>/dev/null; then
+                missing+=("nmap")
+            fi
+            ;;
     esac
     
     if [[ ${#missing[@]} -gt 0 ]]; then
@@ -224,9 +284,7 @@ function check_dependencies() {
 }
 
 # Check dependencies for commands that need them
-if [[ $1 == "start" || $1 == "wake" || $1 == "sway" || $1 == "sync" ]]; then
-    check_dependencies $1 || exit 1
-fi
+check_dependencies $1 || exit 1
 
 if [[ $1 == "start" ]]; then
     remote_start $2
@@ -254,6 +312,8 @@ elif [[ $1 == "info" ]]; then
     remote_info
 elif [[ $1 == "tunnel" ]]; then
     remote_tunnel $2 $3 $4
+elif [[ $1 == "discover" ]]; then
+    remote_discover
 else
     echo "Usage: remote <command>"
     echo ""
@@ -271,6 +331,7 @@ else
     echo " logs [lines]    View remote system logs (default: 50 lines)"
     echo " info            Show detailed remote system information"
     echo " tunnel <local> <remote> [host] Create SSH tunnel"
+    echo " discover        Scan local network for devices and their MAC addresses"
     echo ""
     echo "Examples:"
     echo " remote start --wait"
@@ -280,4 +341,5 @@ else
     echo " remote sync remote:~/backup/ ./backup/ --dry-run"
     echo " remote logs 100"
     echo " remote tunnel 8080 80"
+    echo " remote discover"
 fi
