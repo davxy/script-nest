@@ -1,25 +1,22 @@
 #!/usr/bin/env bash
-#
-# Version 0.0.1
 
-# Load API key from secure environment file
-ENV_FILE="$HOME/.config/aider/env"
-if [[ -f "$ENV_FILE" ]]; then
-  source "$ENV_FILE"
-elif [[ -z "$OPENROUTER_API_KEY" ]]; then
-  echo "Error: OPENROUTER_API_KEY not found. Please create $ENV_FILE with:"
-  echo "export OPENROUTER_API_KEY=your_key_here"
-  echo "Then run: chmod 600 $ENV_FILE"
+# Other available models:
+# - "openai/gpt-4o"
+# - "deepseek/deepseek-r1:free"
+# - "anthropic/claude-opus-4"
+DEFAULT_MODEL="anthropic/claude-sonnet-4"
+
+DEFAULT_API_KEY="$(secret-tool lookup service openrouter)"
+
+AIDER_MODEL=${AIDER_MODEL:-"$DEFAULT_MODEL"}
+OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-"$DEFAULT_API_KEY"}
+
+if [[ -z "$OPENROUTER_API_KEY" ]]; then
+  echo "Error: OPENROUTER_API_KEY is empty or not set"
   exit 1
 fi
 
-# AIDER_MODEL="openai/gpt-4o"
-# AIDER_MODEL="deepseek/deepseek-r1:free"
-# AIDER_MODEL="anthropic/claude-opus-4"
-
-if [[ $AIDER_MODEL = "" ]]; then
-  AIDER_MODEL="anthropic/claude-sonnet-4"
-fi
+export OPENROUTER_API_KEY
 
 echo "Using model: $AIDER_MODEL"
 
@@ -43,11 +40,11 @@ for dir in "${PATH_DIRS[@]}"; do
 done
 
 if [[ -z "$AIDER_BIN" ]]; then
-  echo "Error: Could not find the real aider executable"
-  exit
+  echo "Error: Could not find actual aider executable"
+  exit 1
 fi
 
 "$AIDER_BIN" \
+  --config $HOME/.config/aider.yml \
   --model "openrouter/$AIDER_MODEL" \
-  --cofig "$HOME/.config/aider.yml" \
   "$@"
