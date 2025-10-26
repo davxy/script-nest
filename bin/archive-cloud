@@ -1,11 +1,132 @@
 #!/usr/bin/env bash
 #
 # Archive cloud
+#
+# Version 0.2.0
 
 set -euo pipefail
 
 DEFAULT_ARCHIVE_DIR="/mnt/data/davxy/archive"
 ARCHIVE_DIR="${ARCHIVE_DIR:-$DEFAULT_ARCHIVE_DIR}"
+
+# Supported remotes
+CLOUD_REMOTES=("pcloud" "mega" "dropbox")
+SUPPORTED_REMOTES=("${CLOUD_REMOTES[@]}" "all")
+
+# Function to show help
+show_help() {
+    cat <<EOF
+Usage: archive-cloud [OPTIONS] <remote>
+
+Sync cloud storage to local archive directory.
+
+Arguments:
+  <remote>          Cloud remote to sync (pcloud, mega, dropbox, or all)
+
+Options:
+  --help            Show this help message and exit
+  --list            List all supported remotes
+
+Environment Variables:
+  ARCHIVE_DIR       Archive directory path (default: $DEFAULT_ARCHIVE_DIR)
+
+Examples:
+  archive-cloud pcloud          # Sync pcloud to archive
+  archive-cloud all             # Sync all remotes to archive
+  archive-cloud --list          # List supported remotes
+EOF
+}
+
+# Function to list supported remotes
+list_remotes() {
+    echo "Supported remotes:"
+    for remote in "${SUPPORTED_REMOTES[@]}"; do
+        echo "  - $remote"
+    done
+}
+
+# Function to validate remote
+validate_remote() {
+    local remote="$1"
+    for supported in "${SUPPORTED_REMOTES[@]}"; do
+        if [[ "$remote" == "$supported" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Function to sync with error handling
+sync_cloud() {
+    local service="$1"
+    local target="$ARCHIVE_DIR/cloud/$1"
+
+    echo "--- SYNCING $service ---"
+    if rclone sync --progress "$service:" "$target"; then
+        echo "✓ $service sync completed successfully"
+    else
+        echo "✗ $service sync failed"
+        return 1
+    fi
+}
+
+# Function to sync a single remote (with directory permission handling)
+sync_single_remote() {
+    local remote="$1"
+
+    echo "Syncing $remote to: $ARCHIVE_DIR/cloud/$remote"
+
+    # Sync the cloud service
+    sync_cloud "$remote"
+
+    echo "Cloud archive synced successfully to: $ARCHIVE_DIR/cloud/$remote"
+}
+
+# Function to sync all remotes
+sync_all_remotes() {
+    echo "Syncing all remotes to: $ARCHIVE_DIR/cloud/"
+
+    for remote in "${CLOUD_REMOTES[@]}"; do
+        sync_single_remote "$remote"
+        echo ""
+    done
+
+    echo "All cloud archives synced successfully!"
+}
+
+# Parse command line arguments
+if [[ $# -eq 0 ]]; then
+    show_help
+    exit 0
+fi
+
+case "$1" in
+    --help|-h)
+        show_help
+        exit 0
+        ;;
+    --list|-l)
+        list_remotes
+        exit 0
+        ;;
+    -*)
+        echo "Error: Unknown option: $1"
+        echo ""
+        show_help
+        exit 1
+        ;;
+    *)
+        REMOTE="$1"
+        ;;
+esac
+
+# Validate the remote
+if ! validate_remote "$REMOTE"; then
+    echo "Error: Invalid remote '$REMOTE'"
+    echo ""
+    list_remotes
+    exit 1
+fi
 
 # Check if archive directory exists
 if [[ ! -d "$ARCHIVE_DIR" ]]; then
@@ -16,26 +137,12 @@ fi
 # Make directory writable
 chmod -R u+w "$ARCHIVE_DIR"
 
-# Function to sync with error handling
-sync_cloud() {
-    local service="$1"
-    local target="$ARCHIVE_DIR/cloud/$1"
-    
-    echo "--- SYNCING $service ---"
-    if rclone sync --progress "$service:" "$target"; then
-        echo "✓ $service sync completed successfully"
-    else
-        echo "✗ $service sync failed"
-        return 1
-    fi
-}
-
-# Sync each cloud service
-sync_cloud "pcloud"
-sync_cloud "mega"
-sync_cloud "dropbox"
+# Sync the specified cloud service(s)
+if [[ "$REMOTE" == "all" ]]; then
+    sync_all_remotes
+else
+    sync_single_remote "$REMOTE"
+fi
 
 # Make directory read-only again
 chmod -R a-w "$ARCHIVE_DIR"
-
-echo "All cloud archives synced successfully!"
