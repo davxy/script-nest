@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Get current date and time
-current_date=$(date '+%a %b %d %H:%M:%S %Y')
+current_date=$(date '+%a %d %b %H:%M:%S')
 
 # Get system load
 load_avg=$(uptime | awk -F'load average:' '{print $2}' | awk '{print $1}' | sed 's/,//')
@@ -55,8 +55,9 @@ if [ -n "$network_info" ]; then
     message="$message\n$network_info"
 fi
 
-# ai: print on the terminal the message.
+# Print message to terminal
+echo -e "$message"
+
 # if `notify-send` command is available also call notify-send
 # Use -t option to set timeout and format message better for longer display
-# ai!
 notify-send -e -a "system-info" "System Info" "$message"
