@@ -1,0 +1,62 @@
+#!/bin/bash
+
+# Get current date and time
+current_date=$(date '+%a %b %d %H:%M:%S %Y')
+
+# Get system load
+load_avg=$(uptime | awk -F'load average:' '{print $2}' | awk '{print $1}' | sed 's/,//')
+load_info="Load: $load_avg"
+
+# Get memory usage
+mem_info=$(free -h | awk '/^Mem:/ {printf "Memory: %s/%s", $3, $2}')
+
+# Get battery level if available
+battery_info=""
+if [ -d "/sys/class/power_supply" ]; then
+    for battery in /sys/class/power_supply/BAT*; do
+        if [ -d "$battery" ]; then
+            capacity=$(cat "$battery/capacity" 2>/dev/null)
+            status=$(cat "$battery/status" 2>/dev/null)
+            if [ -n "$capacity" ]; then
+                battery_info="Battery: ${capacity}% (${status})"
+                break
+            fi
+        fi
+    done
+fi
+
+# Get network status
+network_status=""
+# Check if we have internet connectivity
+if ping -c 1 8.8.8.8 >/dev/null 2>&1; then
+    network_status="Network: Connected"
+else
+    network_status="Network: Disconnected"
+fi
+
+# Get active network interface info
+active_interface=$(ip route | grep default | awk '{print $5}' | head -1)
+if [ -n "$active_interface" ]; then
+    ip_addr=$(ip addr show "$active_interface" | grep 'inet ' | awk '{print $2}' | cut -d'/' -f1)
+    if [ -n "$ip_addr" ]; then
+        network_info="$active_interface: $ip_addr"
+    fi
+fi
+
+# Build notification message
+message="$current_date"
+message="$message\n$load_info"
+message="$message\n$mem_info"
+if [ -n "$battery_info" ]; then
+    message="$message\n$battery_info"
+fi
+message="$message\n$network_status"
+if [ -n "$network_info" ]; then
+    message="$message\n$network_info"
+fi
+
+# ai: print on the terminal the message.
+# if `notify-send` command is available also call notify-send
+# Use -t option to set timeout and format message better for longer display
+# ai!
+notify-send -e -a "system-info" "System Info" "$message"
