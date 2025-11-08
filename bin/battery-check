@@ -26,7 +26,7 @@ if [ "$BATTERY_LEVEL" -le "$THRESHOLD" ] && [ "$STATUS" != "Charging" ]; then
     notify-send -u critical "Low Battery" "Battery level is at ${BATTERY_LEVEL}%. Please plug in your charger."
     if [ "$BATTERY_LEVEL" -le "$SHUTDOWN_THRESHOLD" ]; then
         notify-send -u critical "Shutdown in 1 minute"
-        shutodown -h +1
+        shutdown -h +1
     fi
 fi
 
