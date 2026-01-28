@@ -40,6 +40,19 @@ if [ -n "$active_interface" ]; then
     ip_addr=$(ip addr show "$active_interface" | grep 'inet ' | awk '{print $2}' | cut -d'/' -f1)
     if [ -n "$ip_addr" ]; then
         network_info="$active_interface: $ip_addr"
+
+        # Check if interface is wireless and get SSID
+        if [ -d "/sys/class/net/$active_interface/wireless" ]; then
+            # Try iw first
+            ssid=$(iw dev "$active_interface" link 2>/dev/null | grep -oP 'SSID: \K.*')
+            # Fallback to parsing /proc/net/wireless and getting SSID from iw scan
+            if [ -z "$ssid" ] && command -v iw >/dev/null 2>&1; then
+                ssid=$(iw dev "$active_interface" info 2>/dev/null | grep -oP 'ssid \K.*')
+            fi
+            if [ -n "$ssid" ]; then
+                network_info="$network_info ($ssid)"
+            fi
+        fi
     fi
 fi
 
