@@ -1,0 +1,83 @@
+#!/bin/sh
+# zoxide-remove - remove a directory and all its descendants from the zoxide DB.
+#
+# Reads paths directly from the binary DB with strings(1), so it works even
+# when `zoxide query --list` would hang on an unresponsive mount.
+
+set -eu
+
+dry=0
+while getopts "nh" opt; do
+	case $opt in
+		n) dry=1 ;;
+		h|*)
+			cat >&2 <<EOF
+usage: zoxide-remove [-n] <path>
+
+Remove <path> and every descendant entry from the zoxide database.
+
+  -n    dry run; print matching entries, do not remove.
+EOF
+			exit 2
+			;;
+	esac
+done
+shift $((OPTIND - 1))
+
+if [ $# -ne 1 ]; then
+	echo "usage: zoxide-remove [-n] <path>" >&2
+	exit 2
+fi
+
+target=$1
+case $target in
+	/) ;;
+	*/) target=${target%/} ;;
+esac
+
+data_dir=${_ZO_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/zoxide}
+db=$data_dir/db.zo
+if [ ! -f "$db" ]; then
+	echo "zoxide-remove: no DB at $db" >&2
+	exit 1
+fi
+
+# Prefer `zoxide query --list` (authoritative). If it hangs (e.g. wedged FUSE
+# mount makes zoxide stat-block on load), fall back to scanning the binary DB
+# with strings(1) — less precise (trailing bytes from the next field leak into
+# each match) but doesn't touch the filesystem.
+listing=$(timeout 10 zoxide query --list 2>/dev/null || true)
+if [ -z "$listing" ]; then
+	echo "zoxide-remove: query --list unavailable, falling back to strings(1)" >&2
+	listing=$(strings "$db")
+	fallback=1
+else
+	fallback=0
+fi
+
+matches=$(printf '%s\n' "$listing" \
+	| awk -v t="$target" '
+		$0 == t || substr($0, 1, length(t) + 1) == t "/"
+	  ' \
+	| awk '!seen[$0]++')
+
+if [ -z "$matches" ]; then
+	echo "zoxide-remove: no entries under $target"
+	exit 0
+fi
+
+if [ "$dry" -eq 1 ]; then
+	printf '%s\n' "$matches"
+	exit 0
+fi
+
+cp -- "$db" "$db.bak"
+
+printf '%s\n' "$matches" | while IFS= read -r p; do
+	[ -n "$p" ] || continue
+	if ! zoxide remove -- "$p"; then
+		echo "zoxide-remove: failed: $p" >&2
+	fi
+done
+
+echo "zoxide-remove: done (backup: $db.bak)"
