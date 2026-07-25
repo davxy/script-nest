@@ -1,49 +1,52 @@
 #!/bin/bash
 #
-# Sage start in a docker machine
+# Run Sage in a docker container.
 
-# Configuration
+set -euo pipefail
+
 CONF_DIR="${SAGE_CONF_DIR:-${HOME}/.sage}"
 WORK_DIR="${SAGE_WORK_DIR:-.}"
-DOCKER_IMAGE="sagemath/sagemath"
-JUPYTER_PORT="8888"
-BROWSER_DELAY=5
+DOCKER_IMAGE="${SAGE_DOCKER_IMAGE:-sagemath/sagemath}"
+JUPYTER_PORT="${SAGE_JUPYTER_PORT:-8888}"
+BROWSER_DELAY="${SAGE_BROWSER_DELAY:-5}"
+BROWSER="${BROWSER:-firefox}"
 
 show_help() {
-    cat << EOF
-usage: sage [OPTIONS] [MODE]
+    cat <<EOF
+usage: sage [-h] [MODE]
 
-Spawns Sage in a docker container
+Spawns Sage in a docker container.
 
 MODES:
     (none)      Start interactive Sage shell (default)
-    jupyter     Start Jupyter notebook server
+    jupyter     Start Jupyter notebook server and open browser
     shell       Start bash shell in container
 
 OPTIONS:
-    -h          Show this help message
+    -h, --help  Show this help message
 
 ENVIRONMENT VARIABLES:
-    SAGE_CONF_DIR       Configuration directory (default: ~/.sage)
-    SAGE_WORK_DIR       Working directory (default: ~/develop/sage)
+    SAGE_CONF_DIR        Configuration directory (default: ~/.sage)
+    SAGE_WORK_DIR        Working directory (default: .)
+    SAGE_DOCKER_IMAGE    Docker image (default: sagemath/sagemath)
+    SAGE_JUPYTER_PORT    Jupyter port (default: 8888)
+    SAGE_BROWSER_DELAY   Seconds to wait before opening browser (default: 5)
+    BROWSER              Browser command for jupyter mode (default: firefox)
 
 EXAMPLES:
-    sage                # Start interactive Sage
-    sage jupyter        # Start Jupyter notebook
+    sage                            # Start interactive Sage
+    sage jupyter                    # Start Jupyter notebook
     SAGE_WORK_DIR=/tmp/sage sage    # Use custom work directory
 EOF
 }
 
-start_jupyter_browser() {
-    (sleep "$BROWSER_DELAY" && firefox "http://localhost:${JUPYTER_PORT}") &
+open_browser_later() {
+    (sleep "$BROWSER_DELAY" && "$BROWSER" "http://localhost:${JUPYTER_PORT}") &
 }
 
-run_sage_container() {
-    local sage_arg="$1"
-    
-    # Ensure directories exist
+run_container() {
     mkdir -p "$CONF_DIR" "$WORK_DIR"
-    
+
     docker run \
         -ti --rm \
         --user "$(id -u):$(id -g)" \
@@ -51,37 +54,32 @@ run_sage_container() {
         -v "${CONF_DIR}:/home/sage/.sage" \
         -v "${WORK_DIR}:/home/sage/work" \
         -w "/home/sage/work" \
-        "$DOCKER_IMAGE" $sage_arg
+        "$DOCKER_IMAGE" "$@"
 }
 
 main() {
-    local mode="$1"
-    local sage_arg=""
-    
+    local mode="${1:-}"
+
     case "$mode" in
         -h|--help)
             show_help
-            exit 0
-            ;;
-        jupyter)
-            sage_arg="sage-jupyter"
-            start_jupyter_browser
-            ;;
-        shell)
-            sage_arg="/bin/bash"
             ;;
         "")
-            # Default interactive mode
+            run_container
+            ;;
+        jupyter)
+            open_browser_later
+            run_container sage-jupyter
+            ;;
+        shell)
+            run_container /bin/bash
             ;;
         *)
-            echo "Error: Unknown mode '$mode'" >&2
+            echo "Error: unknown mode '$mode'" >&2
             echo "Use 'sage -h' for help" >&2
             exit 1
             ;;
     esac
-    
-    run_sage_container "$sage_arg"
 }
 
 main "$@"
-
