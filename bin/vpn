@@ -98,7 +98,7 @@ function help() {
     echo "  l,list: list available profiles (* currently connected profile)."
     echo ""
     echo "The wireguard configuration files folder can be specified using the"
-    echo "'VPN_CONFIG_FILES' environment variable. If not set, '/etc/wireguard'"
+    echo "'VPN_CONFIG_DIR' environment variable. If not set, '/etc/wireguard'"
     echo "is used."
     exit
 }

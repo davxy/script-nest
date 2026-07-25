@@ -128,7 +128,7 @@ esac
 
 if [[ $modified == 1 ]]; then
     echo "Updating DB..."
-    gpg -o "${data}" --yes --symmetric --batch  --passphrase ${passphrase} ${tmp}
+    gpg -o "${data}" --yes --symmetric --batch  --passphrase ${password} ${tmp}
 fi
 
 rm -f $tmp

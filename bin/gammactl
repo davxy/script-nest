@@ -42,9 +42,6 @@ elif [[ $op == "?" ]]; then
     echo "Min value: $gamma_min"
     echo "Max value: $gamma_max"
     exit
-elif [[ $op == "?" ]]; then
-    echo "Current value: $gamma_curr"
-    exit
 else
     echo "Usage: gammactl [+|-|=][value] | ?"
     echo "   ?         print current value"
