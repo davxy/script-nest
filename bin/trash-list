@@ -1,50 +1,103 @@
 #!/usr/bin/env bash
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.1.2
+# Version: 0.2.0
 #
-# Wrapper for `trash-list` command (part of `trash` package) to:
-# - create fallbacks for missing `*.trashinfo` files
-# - remove orphaned `*.trashinfo` files
- 
+# Wrapper around `trash-list` (from the `trash-cli` package) that reconciles
+# each trash directory before listing it:
+#   - synthesizes a fallback `*.trashinfo` for any trashed file whose metadata
+#     is missing, so orphaned files still show up and can be restored/removed
+#   - deletes `*.trashinfo` entries whose backing file is gone
+
+set -euo pipefail
 shopt -s nullglob
 
-function inspect() {
+readonly TRASH_LIST=/usr/bin/trash-list
+# Original path recorded in synthesized metadata; restoring an orphan lands here.
+readonly ORPHAN_ROOT=/tmp/trash-orphans
+
+usage() {
+  cat <<'EOF'
+Usage: trash-list [-h]
+
+Reconcile every trash directory, then list its contents:
+  - synthesize fallback metadata for trashed files missing their .trashinfo
+  - remove .trashinfo entries whose backing file is gone
+EOF
+}
+
+# Percent-encode a string for the trashinfo `Path` field (RFC 3986, keeping
+# path separators). Iterates bytes so UTF-8 names encode correctly.
+urlencode() {
+  local LC_ALL=C string=$1 out='' i ch
+  for (( i = 0; i < ${#string}; i++ )); do
+    ch=${string:i:1}
+    case $ch in
+      [a-zA-Z0-9._~/-]) out+=$ch ;;
+      *) printf -v ch '%%%02X' "'$ch"; out+=$ch ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
+inspect() {
   local trash_dir=$1
+  local file info name
+  local created=0 cleaned=0
+
   echo "-------------------------------------------"
   echo "Trash @ $trash_dir"
 
-  for file in ${trash_dir}/files/*; do
-    filename=$(basename "$file")
-    info="${trash_dir}/info/${filename}.trashinfo"
-    if [ ! -e "$info" ]; then
-      echo "Missing \"$filename\" metadata, fallback to default"
-      modification_date=$(stat -c "%y" "$file")
-      modification_date=$(date -d "$modification_date" "+%Y-%m-%dT%H:%M:%S")
-      cat > "$info"  <<EOF
+  # Synthesize metadata for files that lost their `.trashinfo`.
+  for file in "$trash_dir"/files/*; do
+    name=$(basename "$file")
+    info="$trash_dir/info/$name.trashinfo"
+    [ -e "$info" ] && continue
+    echo "  + fallback metadata for \"$name\""
+    cat > "$info" <<EOF
 [Trash Info]
-Path=/tmp/trash-orphans/${filename}
-DeletionDate=${modification_date}
+Path=$ORPHAN_ROOT/$(urlencode "$name")
+DeletionDate=$(date -r "$file" "+%Y-%m-%dT%H:%M:%S")
 EOF
-  fi
-done
-
-  for info in "${trash_dir}"/info/*; do
-    filename=$(basename "$info")
-    file="${trash_dir}/files/${filename%.*}"
-    if [ ! -e "$file" ]; then
-      echo "Cleaning orphan metadata for \"${filename%.*}\""
-      rm $info
-    fi
+    created=$((created + 1))
   done
 
-  /usr/bin/trash-list --trash-dir "$trash_dir"
+  # Drop metadata whose backing file is gone.
+  for info in "$trash_dir"/info/*.trashinfo; do
+    name=$(basename "$info" .trashinfo)
+    [ -e "$trash_dir/files/$name" ] && continue
+    echo "  - orphan metadata for \"$name\""
+    rm -f "$info"
+    cleaned=$((cleaned + 1))
+  done
+
+  if (( created || cleaned )); then
+    echo "  (reconciled: $created added, $cleaned removed)"
+  fi
+
+  "$TRASH_LIST" --trash-dir "$trash_dir"
 }
 
-dirs=$(/usr/bin/trash-list --trash-dirs)
+main() {
+  case ${1:-} in
+    -h|--help) usage; return 0 ;;
+  esac
 
-for dir in $dirs; do
-  inspect "$dir" "$@"
-done
+  [ -x "$TRASH_LIST" ] || { echo "error: $TRASH_LIST not found" >&2; exit 1; }
 
+  local -a dirs
+  mapfile -t dirs < <("$TRASH_LIST" --trash-dirs)
 
+  if (( ${#dirs[@]} == 0 )); then
+    echo "No trash directories found."
+    return 0
+  fi
+
+  local dir
+  for dir in "${dirs[@]}"; do
+    [ -d "$dir" ] || continue
+    inspect "$dir"
+  done
+}
+
+main "$@"
