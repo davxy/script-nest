@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 #
 # Author: Davide Galassi <davxy@datawok.net>
-# Version: 0.2.0
+# Version: 0.3.0
 #
 # Wrapper around `trash-list` (from the `trash-cli` package) that reconciles
-# each trash directory before listing it:
+# the trash directories selected by the arguments before listing them:
 #   - synthesizes a fallback `*.trashinfo` for any trashed file whose metadata
 #     is missing, so orphaned files still show up and can be restored/removed
 #   - deletes `*.trashinfo` entries whose backing file is gone
+# All arguments go to the real `trash-list`, so its output and exit status are
+# unchanged. Reconcile messages go to stderr.
 
 set -euo pipefail
 shopt -s nullglob
@@ -15,16 +17,6 @@ shopt -s nullglob
 readonly TRASH_LIST=/usr/bin/trash-list
 # Original path recorded in synthesized metadata; restoring an orphan lands here.
 readonly ORPHAN_ROOT=/tmp/trash-orphans
-
-usage() {
-  cat <<'EOF'
-Usage: trash-list [-h]
-
-Reconcile every trash directory, then list its contents:
-  - synthesize fallback metadata for trashed files missing their .trashinfo
-  - remove .trashinfo entries whose backing file is gone
-EOF
-}
 
 # Percent-encode a string for the trashinfo `Path` field (RFC 3986, keeping
 # path separators). Iterates bytes so UTF-8 names encode correctly.
@@ -40,64 +32,48 @@ urlencode() {
   printf '%s' "$out"
 }
 
-inspect() {
+reconcile() {
   local trash_dir=$1
   local file info name
-  local created=0 cleaned=0
-
-  echo "-------------------------------------------"
-  echo "Trash @ $trash_dir"
 
   # Synthesize metadata for files that lost their `.trashinfo`.
   for file in "$trash_dir"/files/*; do
     name=$(basename "$file")
     info="$trash_dir/info/$name.trashinfo"
     [ -e "$info" ] && continue
-    echo "  + fallback metadata for \"$name\""
+    echo "trash-list: fallback metadata for \"$file\"" >&2
     cat > "$info" <<EOF
 [Trash Info]
 Path=$ORPHAN_ROOT/$(urlencode "$name")
 DeletionDate=$(date -r "$file" "+%Y-%m-%dT%H:%M:%S")
 EOF
-    created=$((created + 1))
   done
 
   # Drop metadata whose backing file is gone.
   for info in "$trash_dir"/info/*.trashinfo; do
     name=$(basename "$info" .trashinfo)
     [ -e "$trash_dir/files/$name" ] && continue
-    echo "  - orphan metadata for \"$name\""
+    echo "trash-list: removed orphan metadata \"$info\"" >&2
     rm -f "$info"
-    cleaned=$((cleaned + 1))
   done
-
-  if (( created || cleaned )); then
-    echo "  (reconciled: $created added, $cleaned removed)"
-  fi
-
-  "$TRASH_LIST" --trash-dir "$trash_dir"
 }
 
 main() {
-  case ${1:-} in
-    -h|--help) usage; return 0 ;;
-  esac
-
   [ -x "$TRASH_LIST" ] || { echo "error: $TRASH_LIST not found" >&2; exit 1; }
 
+  # The real parser selects the dirs, so --trash-dir and --all-users apply.
+  # On a bad option it fails, and nothing is reconciled.
   local -a dirs
-  mapfile -t dirs < <("$TRASH_LIST" --trash-dirs)
-
-  if (( ${#dirs[@]} == 0 )); then
-    echo "No trash directories found."
-    return 0
-  fi
+  mapfile -t dirs < <("$TRASH_LIST" "$@" --trash-dirs 2>/dev/null)
 
   local dir
   for dir in "${dirs[@]}"; do
-    [ -d "$dir" ] || continue
-    inspect "$dir"
+    # Trash dirs of other users (--all-users) are not writable.
+    [ -w "$dir/info" ] || continue
+    reconcile "$dir"
   done
+
+  exec "$TRASH_LIST" "$@"
 }
 
 main "$@"
