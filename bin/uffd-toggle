@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+#
+# Toggle vm.unprivileged_userfaultfd, the sysctl that lets unprivileged processes
+# create a kernel-mode-capable userfaultfd. PolkaVM's Linux sandbox needs it set to 1,
+# otherwise it fails with "failed to create an userfaultfd: permission denied".
+#
+# This changes the LIVE kernel value only; it is NOT persisted across reboots.
+# To persist instead, drop a file in /etc/sysctl.d/ (e.g.
+#   echo 'vm.unprivileged_userfaultfd=1' | sudo tee /etc/sysctl.d/99-polkavm.conf).
+#
+# Usage:
+#   uffd-toggle           flip the current value (0 <-> 1)
+#   uffd-toggle on        force enable (1)
+#   uffd-toggle off       force disable (0)
+#   uffd-toggle status    print current value and exit
+
+set -euo pipefail
+
+KEY="vm.unprivileged_userfaultfd"
+PROC="/proc/sys/${KEY//.//}"
+
+if [[ ! -e "$PROC" ]]; then
+	echo "Error: $PROC not found; this kernel does not expose $KEY" >&2
+	exit 1
+fi
+
+cur=$(cat "$PROC")
+
+case "${1:-toggle}" in
+	status)
+		echo "$KEY = $cur"
+		exit 0
+		;;
+	on)  target=1 ;;
+	off) target=0 ;;
+	toggle)
+		if [[ "$cur" -eq 0 ]]; then target=1; else target=0; fi
+		;;
+	*)
+		echo "Usage: $(basename "$0") [toggle|on|off|status]" >&2
+		exit 2
+		;;
+esac
+
+if [[ "$cur" -eq "$target" ]]; then
+	echo "$KEY already $cur; nothing to do"
+	exit 0
+fi
+
+# sysctl -w requires root.
+SUDO=""
+if [[ $EUID -ne 0 ]]; then
+	SUDO="sudo"
+fi
+
+$SUDO sysctl -w "$KEY=$target" >/dev/null
+echo "$KEY: $cur -> $(cat "$PROC")"

@@ -1,0 +1,42 @@
+#!/usr/bin/bash
+
+DIFF_TOOL="delta"
+# DIFF_TOOL="diff -u --color=always"
+
+if [ "$#" -ne 2 ]; then
+    echo "Usage: $0 file1:start_line1:end_line1 file2:start_line2:end_line2"
+    exit 1
+fi
+
+# Parse file:line_start:line_end argument
+parse_input() {
+  IFS=':' read -r FILE START_LINE END_LINE <<< "$1"
+}
+
+# Parse the two command line arguments
+parse_input "$1"
+FILE1=$FILE
+START_LINE1=$START_LINE
+END_LINE1=$END_LINE
+
+parse_input "$2"
+FILE2=$FILE
+START_LINE2=$START_LINE
+END_LINE2=$END_LINE
+
+# Validate that lines are numeric
+if ! [[ "$START_LINE1" =~ ^[0-9]+$ ]] || ! [[ "$END_LINE1" =~ ^[0-9]+$ ]] || \
+   ! [[ "$START_LINE2" =~ ^[0-9]+$ ]] || ! [[ "$END_LINE2" =~ ^[0-9]+$ ]]; then
+    echo "Error: Line numbers must be numeric."
+    exit 1
+fi
+
+TMP1="$(mktemp).${FILE1##*.}"
+yes '' | head -n $((START_LINE1 - 1)) > ${TMP1}
+sed -n "${START_LINE1},${END_LINE1}p" "${FILE1}" >> ${TMP1}
+
+TMP2="$(mktemp).${FILE2##*.}"
+yes '' | head -n $((START_LINE2 - 1)) > ${TMP2}
+sed -n "${START_LINE2},${END_LINE2}p" "${FILE2}" >> ${TMP2}
+
+$DIFF_TOOL ${TMP1} ${TMP2}

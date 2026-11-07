@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+curl -s https://ipinfo.io/json | jq '{ip, city, region, country, loc, org}'
